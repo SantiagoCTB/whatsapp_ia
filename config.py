@@ -45,6 +45,10 @@ class Config:
         'AI_FALLBACK_MESSAGE',
         'Por ahora no tengo información del catálogo, intentaré más tarde.'
     )
+    AI_OCR_ENABLED = _env_bool('AI_OCR_ENABLED', True)
+    AI_OCR_DPI = int(os.getenv('AI_OCR_DPI', 220))
+    AI_OCR_LANG = os.getenv('AI_OCR_LANG', 'spa+eng')
+    AI_OCR_TESSERACT_CONFIG = os.getenv('AI_OCR_TESSERACT_CONFIG')
     REDIS_URL = os.getenv('REDIS_URL')
     CATALOG_UPLOAD_DIR = os.getenv(
         'CATALOG_UPLOAD_DIR',

@@ -59,5 +59,8 @@
     <p style="margin-top:12px;font-size:14px;color:#424242;">
         Cada respuesta registrará los SKU y páginas consultados en la tabla de auditoría (<code>ia_logs</code>) y se cacheará en Redis si está disponible.
     </p>
+    <p style="margin-top:4px;font-size:13px;color:#616161;">
+        ¿Tu PDF es un escaneo o contiene precios como imagen? Instala Tesseract + el idioma configurado en <code>AI_OCR_LANG</code> (por defecto <code>{{ Config.AI_OCR_LANG }}</code>) para que el sistema ejecute OCR automático durante la ingesta.
+    </p>
 </div>
 {% endblock %}

@@ -12,9 +12,19 @@ from openai import OpenAI
 from pypdf import PdfReader
 
 try:
+    import pypdfium2 as pdfium
+except Exception:  # pragma: no cover - OCR es opcional
+    pdfium = None
+
+try:
     import redis
 except Exception:  # pragma: no cover - redis es opcional
     redis = None
+
+try:
+    import pytesseract
+except Exception:  # pragma: no cover - OCR es opcional
+    pytesseract = None
 
 from config import Config
 from services.db import (
@@ -137,6 +147,94 @@ class CatalogResponder:
         pages = max((int(m.get("page") or 0) for m in metadata), default=0)
         return {"chunks": len(metadata), "sources": sources, "pages": pages}
 
+    def _extract_text_via_ocr(
+        self, pdf_path: str, page_number: int, ocr_context: Dict[str, object]
+    ) -> str:
+        """Intenta reconocer texto mediante OCR cuando una página no tiene texto embebido."""
+
+        if not Config.AI_OCR_ENABLED:
+            return ""
+        if pytesseract is None or pdfium is None:
+            ocr_context.setdefault("error", "missing_libs")
+            return ""
+
+        if ocr_context.get("error") in {"tesseract_missing", "init_failed"}:
+            return ""
+
+        if ocr_context.get("doc") is None:
+            try:
+                ocr_context["doc"] = pdfium.PdfDocument(pdf_path)
+            except Exception:
+                logging.warning("No se pudo abrir el PDF para OCR", exc_info=True)
+                ocr_context["error"] = "init_failed"
+                return ""
+
+        doc = ocr_context.get("doc")
+        try:
+            page = doc[page_number - 1]
+        except Exception:
+            logging.warning("No se pudo acceder a la página %s para OCR", page_number, exc_info=True)
+            ocr_context["error"] = "page_failed"
+            return ""
+
+        try:
+            dpi = max(72, Config.AI_OCR_DPI)
+        except Exception:
+            dpi = 220
+
+        try:
+            scale = dpi / 72.0
+            bitmap = page.render(scale=scale)
+            pil_image = bitmap.to_pil()
+        except Exception:
+            logging.warning("No se pudo renderizar la página %s para OCR", page_number, exc_info=True)
+            page.close()
+            ocr_context["error"] = "render_failed"
+            return ""
+        finally:
+            page.close()
+
+        tess_kwargs: Dict[str, object] = {}
+        lang = (Config.AI_OCR_LANG or "").strip()
+        if lang:
+            tess_kwargs["lang"] = lang
+        if Config.AI_OCR_TESSERACT_CONFIG:
+            tess_kwargs["config"] = Config.AI_OCR_TESSERACT_CONFIG
+
+        try:
+            text = pytesseract.image_to_string(pil_image, **tess_kwargs)
+        except Exception as exc:
+            tesseract_mod = getattr(pytesseract, "pytesseract", None)
+
+            if tesseract_mod and isinstance(exc, getattr(tesseract_mod, "TesseractNotFoundError", Exception)):
+                logging.warning("Tesseract no está instalado en el sistema.")
+                ocr_context["error"] = "tesseract_missing"
+                return ""
+
+            if (
+                lang
+                and "Failed loading language" in str(exc)
+                and tesseract_mod
+                and hasattr(tesseract_mod, "TesseractError")
+            ):
+                logging.warning(
+                    "No se encontró el paquete de idioma '%s' para Tesseract, se usará el idioma por defecto.",
+                    lang,
+                )
+                tess_kwargs.pop("lang", None)
+                try:
+                    text = pytesseract.image_to_string(pil_image, **tess_kwargs)
+                except Exception:
+                    logging.warning("Falló el OCR incluso con el idioma por defecto", exc_info=True)
+                    ocr_context["error"] = "ocr_failed"
+                    return ""
+            else:
+                logging.warning("Falló el OCR en la página %s", page_number, exc_info=True)
+                ocr_context["error"] = "ocr_failed"
+                return ""
+
+        return text
+
     def reload(self) -> None:
         """Forza recarga desde disco (usado tras ingesta)."""
         self._last_mtime = 0.0
@@ -153,6 +251,57 @@ class CatalogResponder:
         reader = PdfReader(pdf_path)
         metadata: List[Dict[str, object]] = []
         chunks: List[str] = []
+        ocr_context: Dict[str, object] = {"doc": None}
+        try:
+            for page_number, page in enumerate(reader.pages, start=1):
+                try:
+                    page_text = page.extract_text() or ""
+                except Exception:
+                    logging.warning("No se pudo extraer texto de la página %s", page_number, exc_info=True)
+                    page_text = ""
+                if not page_text.strip():
+                    ocr_text = self._extract_text_via_ocr(pdf_path, page_number, ocr_context)
+                    page_text = ocr_text or ""
+                for chunk_idx, chunk in enumerate(self._chunk_text(page_text), start=1):
+                    if not chunk.strip():
+                        continue
+                    metadata.append(
+                        {
+                            "page": page_number,
+                            "chunk": chunk_idx,
+                            "text": chunk,
+                            "source": source_name or os.path.basename(pdf_path),
+                            "skus": self._extract_skus(chunk),
+                        }
+                    )
+                    chunks.append(chunk)
+        finally:
+            doc = ocr_context.get("doc")
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+
+        if not chunks:
+            error_reason = ocr_context.get("error")
+            if error_reason == "missing_libs":
+                raise ValueError(
+                    "El PDF no contiene texto utilizable y faltan dependencias de OCR (pypdfium2/pytesseract)."
+                )
+            if error_reason == "tesseract_missing":
+                raise ValueError(
+                    "El PDF no contiene texto utilizable y Tesseract no está instalado en el sistema."
+                )
+            if error_reason in {"init_failed", "render_failed", "ocr_failed", "page_failed"}:
+                raise ValueError(
+                    "No se pudo extraer texto del PDF ni con OCR, revisa la calidad del archivo."
+                )
+            if Config.AI_OCR_ENABLED:
+                raise ValueError(
+                    "El PDF no contiene texto utilizable incluso con OCR."
+                )
+=======
         for page_number, page in enumerate(reader.pages, start=1):
             try:
                 page_text = page.extract_text() or ""

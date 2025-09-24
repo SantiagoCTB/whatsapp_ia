@@ -77,12 +77,17 @@ Las variables se cargan desde `.env` mediante `python-dotenv` y están centraliz
 | `MEDIA_ROOT` | Ruta persistente para guardar archivos subidos; por defecto `static/uploads`. |
 | `MAX_TRANSCRIPTION_DURATION_MS`, `TRANSCRIPTION_MAX_AVG_TIME_SEC` | Límites para controlar la transcripción de audios. |
 | `INIT_DB_ON_START` | (Opcional) Igual a `1` para ejecutar `init_db()` automáticamente al iniciar la app. |
+| `AI_OCR_ENABLED` | Igual a `1` para activar el OCR en páginas sin texto embebido (requiere Tesseract). |
+| `AI_OCR_DPI` | Resolución en DPI al rasterizar páginas para el OCR (por defecto 220). |
+| `AI_OCR_LANG` | Idiomas instalados en Tesseract para el OCR (por defecto `spa+eng`, usa `eng` si solo tienes inglés). |
+| `AI_OCR_TESSERACT_CONFIG` | Parámetros extra de Tesseract (por ejemplo, `--psm 6`). |
 
 ## Requisitos previos
 - Python 3.9+ (incluye `venv`).
 - Servidor MySQL accesible y con base de datos creada.
-- [ffmpeg](https://ffmpeg.org/) instalado en el sistema host (necesario para normalizar audios). 
-- Modelo de Vosk en español disponible; el primer uso lo descarga automáticamente (`vosk` >= 0.3). 
+- [ffmpeg](https://ffmpeg.org/) instalado en el sistema host (necesario para normalizar audios).
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para interpretar catálogos escaneados o con texto embebido en imágenes. Instala también los paquetes de idioma que necesites (por ejemplo, español) si deseas aprovechar el OCR.
+- Modelo de Vosk en español disponible; el primer uso lo descarga automáticamente (`vosk` >= 0.3).
 - Credenciales activas de la WhatsApp Cloud API y webhook configurado hacia `/webhook`.
 
 Para instalar `ffmpeg` manualmente:
@@ -93,7 +98,14 @@ sudo apt-get update && sudo apt-get install -y ffmpeg
 # macOS (Homebrew)
 brew install ffmpeg
 ```
-Si usas contenedores, añade la instalación al `Dockerfile` o a la imagen base. 
+Si usas contenedores, añade la instalación al `Dockerfile` o a la imagen base.
+
+Para habilitar el OCR en catálogos escaneados instala Tesseract y sus idiomas (ejemplo en Ubuntu/Debian):
+
+```bash
+sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-spa
+```
+En macOS puedes usar Homebrew (`brew install tesseract tesseract-lang`), y en Windows descarga el instalador oficial. Ajusta la variable `AI_OCR_LANG` si tu instalación no incluye español.
 
 ## Instalación local
 ```bash
