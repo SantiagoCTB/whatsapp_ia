@@ -208,6 +208,7 @@ class CatalogResponder:
         try:
             textpage = page.get_textpage()
             text = textpage.get_text_bounded() or ""
+            text = textpage.get_text_range() or ""
         except Exception:
             logging.warning(
                 "Falló la extracción de texto vía pypdfium2 en la página %s", page_number, exc_info=True
