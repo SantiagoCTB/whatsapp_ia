@@ -1,0 +1,232 @@
+{% extends 'base.html' %}
+{% block title %}Tablero{% endblock %}
+{% block body_class %}page{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='tablero.css') }}">
+
+<div class="top-right">
+    <a href="{{ url_for('chat.index') }}">
+        <button class="back-btn btn-primary">Volver al inicio</button>
+    </a>
+</div>
+
+
+<button id="filters-toggle" class="filters-toggle btn-primary" type="button">Filtros</button>
+<div class="filters-panel">
+    <label for="fechaInicio">Desde:</label>
+    <input type="date" id="fechaInicio">
+    <label for="fechaFin">Hasta:</label>
+    <input type="date" id="fechaFin">
+    <label for="limit">Límite de palabras:</label>
+    <input type="number" id="limit" min="1" value="10">
+    <label for="filtroRol">Rol:</label>
+    <select id="filtroRol">
+        <option value="">Todos</option>
+    </select>
+    <label for="filtroNumero">Número:</label>
+    <select id="filtroNumero">
+        <option value="">Todos</option>
+    </select>
+    <div class="message-type">
+        <span>Tipo:</span>
+        <label><input type="checkbox" id="tipoCliente" value="cliente" checked> Cliente</label>
+        <label><input type="checkbox" id="tipoBot" value="bot" checked> Bot</label>
+        <label><input type="checkbox" id="tipoAsesor" value="asesor" checked> Asesor</label>
+    </div>
+    <button id="apply-filters" class="btn-primary" type="button">Aplicar</button>
+    <button id="clear-filters" class="btn-primary" type="button">Limpiar filtros</button>
+</div>
+
+
+<main>
+    <div class="dashboard-grid">
+        <section class="cards resumen">
+            <div class="card">
+                <div class="card-content">
+                    <span class="icon">💬</span>
+                    <div class="text">
+                        <h3>Total de mensajes</h3>
+                        <p id="totalMensajes">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-content">
+                    <span class="icon">👥</span>
+                    <div class="text">
+                        <h3>Cantidad de roles</h3>
+                        <p id="cantidadRoles">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-content">
+                    <span class="icon">📤</span>
+                    <div class="text">
+                        <h3>Enviados</h3>
+                        <p id="totalEnviados">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-content">
+                    <span class="icon">📥</span>
+                    <div class="text">
+                        <h3>Recibidos</h3>
+                        <p id="totalRecibidos">0</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <section class="cards accesos">
+            <div class="card acceso">Tiquetes</div>
+            <div class="card acceso">Cotizar</div>
+        </section>
+        <section class="reports" id="reportes">
+            <!-- Gráficos iniciales a ancho completo -->
+            <div class="wide-row">
+                <div class="card chart-card">
+                    <div class="card-header">
+                        <span class="icon">📅</span>
+                        <h4>Mensajes por Día</h4>
+                    </div>
+                    <canvas id="graficoDiario"></canvas>
+                </div>
+                <div class="card chart-card">
+                    <div class="card-header">
+                        <span class="icon">⏰</span>
+                        <h4>Mensajes por Hora</h4>
+                    </div>
+                    <canvas id="graficoHora"></canvas>
+                </div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">📆</span>
+                    <h4>Mensajes por Semana</h4>
+                </div>
+                <div class="chart-table">
+                    <canvas id="graficoSemana"></canvas>
+                    <table id="tabla_semana" class="fixed-table">
+                        <thead>
+                            <tr>
+                                <th>Día</th>
+                                <th>Mensajes</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">📊</span>
+                    <h3>Totales de mensajes</h3>
+                </div>
+                <canvas id="graficoTotales"></canvas>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">👤</span>
+                    <h4>Mensajes por Usuario</h4>
+                </div>
+                <canvas id="grafico"></canvas>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">🏆</span>
+                    <h4>Top Números</h4>
+                </div>
+                <div class="chart-table">
+                    <canvas id="graficoTopNumeros"></canvas>
+                    <table id="tabla_top_numeros" class="fixed-table">
+                        <thead>
+                            <tr>
+                                <th>Número</th>
+                                <th>Mensajes</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">🙅📞</span>
+                    <h4>Números sin Asesor</h4>
+                </div>
+                <div class="chart-table">
+                    <canvas id="graficoNumerosSinAsesor"></canvas>
+                    <table id="tabla_numeros_sin_asesor" class="fixed-table">
+                        <thead>
+                            <tr><th>Número</th><th>Mensajes</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">🔤</span>
+                    <h4>Palabras Más Usadas</h4>
+                </div>
+                <div class="chart-table">
+                    <canvas id="grafico_palabras"></canvas>
+                    <table id="tabla_palabras" class="fixed-table">
+                        <thead>
+                            <tr>
+                                <th>Palabra</th>
+                                <th>Frecuencia</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">👥</span>
+                    <h4>Roles</h4>
+                </div>
+                <div class="chart-table">
+                    <canvas id="grafico_roles"></canvas>
+                    <table id="tabla_roles" class="fixed-table">
+                        <thead>
+                            <tr>
+                                <th>Rol</th>
+                                <th>Mensajes</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">💬</span>
+                    <h4>Tipos de Mensaje</h4>
+                </div>
+                <canvas id="graficoTipos"></canvas>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">🗓️</span>
+                    <h4>Tipos por Día</h4>
+                </div>
+                <canvas id="graficoTiposDiarios"></canvas>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="icon">🙅</span>
+                    <h4>Mensajes sin Asesor</h4>
+                </div>
+                <canvas id="graficoSinAsesor"></canvas>
+            </div>
+        </section>
+    </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{{ url_for('static', filename='tablero.js') }}"></script>
+{% endblock %}
+

@@ -1,0 +1,599 @@
+    :root {
+      --bg-page:        #434343;  /* fondo general, muy suave verdoso */
+      --bg-sidebar:     #F5F9F8;  /* blanco puro para la barra lateral */
+      --bg-chat:        #F5F9F8;  /* fondo del chat más claro aún */
+
+      --accent:         #00A884;  /* verde WhatsApp moderno */
+      --accent-hover:   #007C67;  /* verde más oscuro para hover */
+      --accent-neon:    #00A884;  /* acento verde neón */
+      --bg-glass:       rgba(255,255,255,0.1); /* fondo translúcido */
+
+      --bubble-user:    #D2F5F0;  /* mensajes del cliente */
+      --bubble-bot:     #F7F3B7;  /* gris suave, para el bot */
+      --bubble-asesor:  #C0F2C9;  /* verde más claro, asesor */
+
+      --text-main:      #212121;  /* texto oscuro pero suave */
+      --text-light:     #ffffff;  /* texto sobre fondo oscuro */
+
+      --border-color: #B2DFDB; /* tono suave basado en el acento */
+      --timestamp-color: #666666; /* color sutil para hora */
+      --font-base: 'Segoe UI', sans-serif;
+      --vh: 1vh;
+    }
+
+      * { box-sizing: border-box; margin:0; padding:0; }
+      img, video, canvas {
+        max-width: 100%;
+        height: auto;
+      }
+      body {
+      font-family: var(--font-base);
+      background: var(--bg-page);
+      background-image: url("/static/fondo_general.jpeg");
+      background-size: cover;
+      background-repeat: repeat;
+      background-position: center;
+    }
+    body.chat {
+      display: flex;
+      height: calc(var(--vh) * 100);
+      overflow: hidden;
+    }
+    body.page {
+      padding: 20px;
+      background: #fff;
+      background-image: none;
+    }
+    .container {
+      flex: 1;
+      display: flex;
+      margin: 16px;
+      min-height: 0;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      background: var(--bg-chat);
+      border: 2px solid var(--accent); /* ✅ Agrega borde */
+    }
+
+    #menuToggle {
+      display: none;
+      background: var(--accent-neon);
+      border: none;
+      color: var(--text-light);
+      padding: 8px;
+      font-size: 24px;
+      cursor: pointer;
+    }
+
+    #roleToggle {
+      display: none;
+      background: var(--accent-neon);
+      border: none;
+      color: var(--text-light);
+      padding: 8px;
+      font-size: 24px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    /* Sidebar */
+    .sidebar {
+      width:25%; background:var(--bg-sidebar);
+      padding:20px; display:flex; flex-direction:column;
+      position:relative;
+    }
+    .sidebar-header {
+      display:flex; align-items:center; justify-content:space-between;
+      margin-bottom:16px;
+    }
+    #settingsBtn {
+      background:var(--accent-neon); border:none; color:var(--text-light);
+      width:36px; height:36px; border-radius:50%; font-size:20px;
+      cursor:pointer; transition:transform 0.2s, background 0.3s, color 0.3s;
+    }
+    #settingsBtn:hover {
+      transform:rotate(90deg);
+      background:var(--accent-hover);
+    }
+    #settingsMenu {
+      position: absolute;
+      top: 60px;
+      left: 20px;
+      display: flex;
+      flex-direction: column;
+      background: var(--text-light);
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      opacity: 0;
+      transform: scale(0.8);
+      transform-origin: top left;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      z-index: 10;
+      padding: 4px 0; /* ✅ un pequeño espacio interno */
+      width: max-content; /* ✅ ajusta al contenido */
+    }
+    #settingsMenu.show {
+      opacity:1; transform:scale(1); pointer-events:auto;
+    }
+    #settingsMenu a {
+      padding:8px 12px; text-decoration:none;
+      color:var(--accent-neon); font-size:14px;
+      transition:background 0.3s, color 0.3s;
+    }
+    #settingsMenu a:hover {
+      background:var(--accent-neon); color:var(--text-light);
+    }
+    .sidebar h2 {
+      color:var(--text-main); text-align:center;
+      font-weight:normal; flex:0 0 auto;
+    }
+    #buscador {
+      padding:8px; border:none; border-radius:12px;
+      margin-bottom:12px; font-size:14px;
+    }
+    #chatList {
+      flex:1; overflow-y:auto; list-style:none;
+    }
+    #chatList li {
+      position:relative;
+      padding:12px; margin-bottom:6px; border-radius:12px;
+      cursor:pointer; transition:background 0.3s,transform 0.2s;
+      color:var(--text-main);
+      padding-left:12px;
+      display:flex; justify-content:space-between; align-items:center;
+      flex-wrap: wrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    #chatList li:hover {
+      background:var(--accent-hover); color:var(--text-light);
+      transform:translateX(4px);
+    }
+    #chatList li.active {
+      background:var(--accent); color:var(--text-light);
+    }
+    .badges {
+      display:flex;
+      gap:4px;
+    }
+    #chatList li .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--text-light);
+      font-size: 12px;
+      pointer-events: none;
+    }
+    .estado-sin_regla { background-color: #ff4d4f; color: var(--text-light); }
+    .estado-sin_respuesta { background-color: #ff4d4f; color: var(--text-light); }
+    .estado-espera_usuario { background-color: #ffc107; color: var(--text-main); }
+    .estado-asesor { background-color: #28a745; color: var(--text-light); }
+
+    /* Chat window */
+    .chatWindow {
+      flex:1;
+      display:flex;
+      flex-direction:column;
+      height: calc(var(--vh) * 100);
+      overflow: hidden;
+    }
+    #botonera {
+      display:flex; gap:8px; padding:12px;
+      background: var(--bg-chat);
+      overflow-x: auto;
+      border: 1px solid var(--border-color); /* ✅ Borde completo */
+      border-radius: 12px; /* Opcional: redondeado si quieres */
+      margin: 8px;         /* Opcional: separación visual */
+    }
+    #botonera button {
+      flex:0 0 auto; padding: 8px 16px; min-width: fit-content;
+      border:none; border-radius:8px; background:var(--accent-neon);
+      white-space: nowrap;
+      color:var(--text-light); cursor:pointer;
+      transition:transform 0.2s, background 0.3s, color 0.3s;
+    }
+    #botonera button:hover {
+      transform:scale(1.1); background:var(--accent-hover);
+    }
+
+    #chatBox {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+
+      background-image: url("/static/fondo_chats.png"); /* ✅ Ruta */
+      background-repeat: repeat;
+      background-size: contain; /* O "cover" si quieres que se estire */
+      background-position: center;
+    }
+
+    .sidebar, .chatWindow {
+      border-right: 1px solid var(--border-color);
+    }
+    #botonera, .inputArea {
+      border-top: 1px solid var(--border-color);
+    }
+    #chatBox .timestamp {
+      font-size: 11px;
+      color: var(--timestamp-color);
+      margin-top: 4px;
+      text-align: right;
+    }
+
+    .message {
+      animation:fadeIn 0.3s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity:0; transform:translateY(8px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+    .bubble {
+      max-width:70%; padding:10px 14px; border-radius:16px;
+      word-wrap:break-word; box-shadow:0 2px 4px rgba(0,0,0,0.1);
+    }
+    .reply {
+      font-size:0.85em; opacity:0.8;
+      border-left:3px solid var(--accent);
+      padding-left:6px; margin-bottom:4px;
+    }
+    .context-menu {
+      position:absolute;
+      background:var(--text-light);
+      border:1px solid #ccc;
+      border-radius:4px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      display:none;
+      z-index:20;
+    }
+    .context-menu.show { display:block; }
+    .context-menu div {
+      padding:8px 12px; cursor:pointer;
+    }
+    .context-menu div:hover {
+      background:var(--accent); color:var(--text-light);
+    }
+    .reply-preview {
+      margin:8px 12px; padding:4px 8px;
+      border-left:3px solid var(--accent);
+      background:var(--text-light);
+      display:none;
+    }
+    .reply-preview img,
+    .reply-preview video,
+    .reply-preview audio {
+      max-width:100px; display:block; margin-bottom:4px;
+    }
+    .cliente { align-self:flex-start; background:var(--bubble-user); color:var(--text-main); }
+    .bot     { align-self:flex-end;   background:var(--bubble-bot);  color:var(--text-main); }
+    .asesor  { align-self:flex-end;   background:var(--bubble-asesor); color:var(--text-main); font-weight:bold; }
+
+    /* Input area */
+    .inputArea {
+      display:flex; align-items:center;
+      padding:12px; background:var(--text-light);
+      border-top:1px solid #ddd; position: sticky; bottom: 0;
+    }
+    #attachBtn {
+      width:40px; height:40px; border:none; border-radius:50%;
+      background:var(--accent-neon); color:var(--text-light);
+      font-size:24px; cursor:pointer;
+      transition:transform 0.2s, background 0.3s, color 0.3s;
+      margin-right:12px; position:relative; overflow:hidden;
+    }
+    #attachBtn:hover {
+      transform:rotate(90deg); background:var(--accent-hover);
+    }
+    .attach-menu {
+      position:absolute; bottom:60px; left:20px;
+      display:flex; flex-direction:column;
+      background:var(--text-light); border:1px solid #ccc;
+      border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      opacity:0; transform:scale(0.8); transform-origin:bottom left;
+      transition:opacity 0.2s,transform 0.2s;
+      pointer-events:none; z-index:10;
+    }
+    .attach-menu.show {
+      opacity:1; transform:scale(1); pointer-events:auto;
+    }
+    .attach-item {
+      width:36px; height:36px; margin:8px;
+      border-radius:50%; background:var(--accent-neon);
+      color:var(--text-light); display:flex;
+      align-items:center; justify-content:center;
+      font-size:20px; cursor:pointer;
+      transition:transform 0.2s, background 0.3s, color 0.3s;
+    }
+    .attach-item:hover {
+      transform:scale(1.2); background:var(--accent-hover);
+    }
+    .record-controls {
+      display:flex;
+      gap:8px;
+      margin-top:8px;
+    }
+    .record-controls button {
+      width:36px; height:36px;
+      border-radius:50%;
+      border:none;
+      background:var(--accent-neon);
+      color:var(--text-light);
+      font-size:20px;
+      cursor:pointer;
+      transition:transform 0.2s, background 0.3s;
+    }
+    .record-controls button:disabled {
+      background:#aaa;
+      cursor:default;
+    }
+    #messageInput {
+      flex:1; padding:10px 14px; border:1px solid #ccc;
+      border-radius:20px; font-size:14px; outline:none;
+      margin-right:12px;
+    }
+    #sendBtn {
+      padding:10px 20px; border:none; border-radius:20px;
+      background:var(--accent-neon); color:var(--text-light);
+      cursor:pointer; transition:transform 0.2s, background 0.3s, color 0.3s;
+      position:relative; overflow:hidden;
+    }
+    #sendBtn:hover {
+      transform:scale(1.05); background:var(--accent-hover);
+    }
+    button:after {
+      content:''; position:absolute; width:100px; height:100px;
+      background:rgba(255,255,255,0.3); border-radius:50%;
+      transform:scale(0); opacity:0;
+      transition:transform 0.5s,opacity 0.8s;
+    }
+    button:active:after {
+      transform:scale(1); opacity:1; transition:0s;
+    }
+
+    .role-indicator {
+      position: fixed;
+      bottom: 8px;
+      right: 8px;
+      font-size: 12px;
+      color: rgba(0, 0, 0, 0.4);
+      pointer-events: none;
+    }
+
+    .role-drop-zone {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .role-icon {
+      min-width: 60px;
+      height: 60px;
+      border-radius: 12px;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 24px;
+      color: var(--text-light);
+      padding: 0 12px;
+    }
+
+    .role-icon.drag-over {
+      background: var(--accent-hover);
+    }
+
+    /* Generic form and table styles for admin pages */
+    form, table {
+      background: var(--text-light);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 8px;
+      margin-top: 6px;
+      margin-bottom: 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    form button {
+      background: var(--accent-neon);
+      color: var(--text-light);
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.3s, color 0.3s;
+    }
+    form button:hover {
+      background: var(--accent-hover);
+    }
+
+    /* Reusable primary button with hover transition and ripple effect */
+    .btn-primary {
+      background: var(--accent-neon);
+      color: var(--text-light);
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s, background 0.3s, color 0.3s;
+    }
+    .btn-primary:hover {
+      transform: scale(1.05);
+      background: var(--accent-hover);
+    }
+    .btn-primary::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      background: rgba(255,255,255,0.4);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .btn-primary:active::after {
+      animation: ripple 0.6s ease-out;
+    }
+    @keyframes ripple {
+      from {
+        opacity: 0.4;
+        width: 0;
+        height: 0;
+      }
+      to {
+        opacity: 0;
+        width: 200%;
+        height: 200%;
+      }
+    }
+
+      table {
+        width: 100%;
+        table-layout: fixed;
+      }
+      /* Contenedor reutilizable para tablas amplias con desplazamiento */
+      .fixed-table {
+      width: 100%;
+      max-width: none;  /* antes: 800px */
+      max-height: 400px;
+      overflow-x: auto;
+      overflow-y: auto;
+      word-break: break-word;
+      white-space: normal;
+      margin: 0 auto;
+      }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    .delete-btn,
+    .edit-btn {
+      background: #fff;
+      color: var(--accent-neon);
+      border: 1px solid var(--accent-neon);
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.3s, color 0.3s;
+      display: block;
+      width: 100%;
+    }
+    .delete-btn:hover,
+    .edit-btn:hover {
+      background: var(--accent-hover);
+      color: var(--text-light);
+    }
+
+    .action-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .action-cell form {
+      margin: 0;
+      width: 100%;
+    }
+
+    .top-right {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+    }
+    .back-btn {
+      background: var(--accent-neon);
+      color: var(--text-light);
+      border: none;
+      border-radius: 6px;
+      padding: 10px 20px;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      transition: background 0.3s, color 0.3s;
+    }
+    .back-btn:hover {
+      background: var(--accent-hover);
+    }
+@media (min-width: 769px) {
+  body.chat {
+    overflow: hidden;
+  }
+}
+@media (max-width: 768px) {
+  body.chat {
+    overflow: hidden;
+  }
+
+  .container {
+    flex-direction: column;
+    margin: 8px;
+  }
+
+  #menuToggle {
+    display: block;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    padding: 10px;
+    display: none;
+  }
+
+  .sidebar.visible {
+    display: flex;
+  }
+
+  .chatWindow {
+    height: calc(var(--vh) * 100);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #chatBox {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .role-drop-zone {
+    position: static;
+    justify-content: center;
+    margin-top: 10px;
+    display: none;
+  }
+
+  .role-drop-zone.show {
+    display: flex;
+  }
+
+  #roleToggle {
+    display: block;
+  }
+
+  .role-indicator {
+    bottom: auto;
+    top: 8px;
+    right: 8px;
+  }
+}

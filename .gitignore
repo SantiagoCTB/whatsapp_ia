@@ -1,0 +1,17 @@
+# Archivos de entorno
+.env
+.env.*
+
+# Bases de datos SQLite
+*.db
+*.db-journal
+
+# Archivos de log o temporales
+*.log
+__pycache__/
+*.pyc
+
+# Medios generados por los usuarios
+static/uploads/
+uploads/
+media/

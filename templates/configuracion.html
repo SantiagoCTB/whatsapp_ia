@@ -1,0 +1,246 @@
+{% extends 'base.html' %}
+{% block title %}Configuración de Reglas{% endblock %}
+{% block body_class %}page{% endblock %}
+{% block content %}
+<div class="top-right">
+    <a href="{{ url_for('chat.index') }}">
+        <button class="back-btn btn-primary">Volver al inicio</button>
+    </a>
+</div>
+
+<h2>Configuración de Reglas</h2>
+<p>Para reglas de medición usa "*" en <em>Texto del usuario</em> y define la fórmula en <em>Cálculo</em> con variables como <code>medida</code>, <code>p1</code> o <code>p2</code>. El comodín "*" permite avanzar al siguiente paso sin validar el texto recibido: si es la única regla del paso se ejecutará de forma automática; si hay más reglas, actuará como opción por defecto. Opcionalmente indica un <em>Handler</em> para delegar el cálculo a código externo.</p>
+
+<form id="reglaForm" method="POST" enctype="multipart/form-data">
+    <h3>Agregar o actualizar regla</h3>
+    <input type="hidden" id="regla_id" name="regla_id">
+    <label for="step">Paso actual:</label>
+    <input type="text" id="step" name="step" required>
+
+    <label for="input_text">Texto del usuario (separa sinónimos con comas):</label>
+    <input type="text" id="input_text" name="input_text" placeholder="palabra1, palabra2" required>
+
+    <label for="respuesta">Respuesta del bot:</label>
+    <textarea id="respuesta" name="respuesta" rows="4" required></textarea>
+
+    <label for="siguiente_step">Siguiente paso (puedes ingresar varios pasos separados por comas):</label>
+    <input type="text" id="siguiente_step" name="siguiente_step" placeholder="paso1, paso2">
+
+    <label for="tipo">Tipo:</label>
+    <select name="tipo" id="tipo" class="form-control">
+        <option value="texto">Texto</option>
+        <option value="boton">Botón</option>
+        <option value="lista">Lista</option>
+        <option value="image">Imagen</option>
+        <option value="document">Documento</option>
+        <option value="video">Video</option>
+        <option value="audio">Audio</option>
+    </select>
+
+    <label for="media" id="label_media_file" style="display:none;">Subir archivo:</label>
+    <input type="file" id="media" name="media" style="display:none;">
+
+    <label for="media_url" id="label_media_url" style="display:none;">o URL del archivo:</label>
+    <input type="text" id="media_url" name="media_url" style="display:none;">
+
+    <label for="rol_keyword">Rol keyword:</label>
+    <input type="text" id="rol_keyword" name="rol_keyword">
+
+    <label for="calculo">Cálculo:</label>
+    <input type="text" id="calculo" name="calculo">
+
+    <label for="handler">Handler externo:</label>
+    <input type="text" id="handler" name="handler">
+
+    <label for="list_header" class="list-field" style="display:none;">Encabezado de la lista:</label>
+    <input type="text" id="list_header" name="list_header" class="list-field" style="display:none;">
+
+    <label for="list_button" class="list-field" style="display:none;">Texto del botón:</label>
+    <input type="text" id="list_button" name="list_button" class="list-field" style="display:none;">
+
+    <label for="list_footer" class="list-field" style="display:none;">Pie de página (opcional):</label>
+    <input type="text" id="list_footer" name="list_footer" class="list-field" style="display:none;">
+
+    <label for="button_options" class="button-field" style="display:none;">Opciones del botón (JSON):</label>
+    <textarea id="button_options" name="button_options" class="button-field" style="display:none;" rows="4" cols="60" placeholder='[{"type":"reply","title":"Opción","id":"1"}]'></textarea>
+
+    <label for="sections" class="list-field" style="display:none;">Secciones (formato JSON):</label><br>
+    <textarea id="sections" name="sections" class="list-field" style="display:none;" rows="6" cols="60" placeholder='[{"title":"Rápido","rows":[{"id":"express","title":"Express","description":"1 día"}]}]'></textarea>
+    <input type="hidden" name="opciones" id="opciones">
+
+    <button type="submit" class="btn-primary">Guardar regla</button>
+</form>
+
+<form method="POST" enctype="multipart/form-data">
+    <h3>Importar reglas desde archivo Excel (.xlsx)</h3>
+    <input type="file" name="archivo" accept=".xlsx" required>
+    <button type="submit" class="btn-primary">Importar reglas</button>
+</form>
+
+<h3>Reglas existentes</h3>
+<table class="fixed-table">
+    <tr>
+        <th>ID</th>
+        <th>Paso</th>
+        <th>Input</th>
+        <th>Respuesta</th>
+        <th>Siguiente paso</th>
+        <th>Tipo</th>
+        <th>Media URL</th>
+        <th>Media Tipo</th>
+        <th>Rol</th>
+        <th>Opciones</th>
+        <th>Encabezado</th>
+        <th>Botón</th>
+        <th>Pie</th>
+        <th>Cálculo</th>
+        <th>Handler</th>
+        <th>Acción</th>
+    </tr>
+    {% for regla in reglas %}
+    <tr>
+        <td>{{ regla.id }}</td>
+        <td>{{ regla.step }}</td>
+        <td>{{ regla.input_text }}</td>
+        <td>{{ regla.respuesta }}</td>
+        <td>{{ regla.siguiente_step or '-' }}</td>
+        <td>{{ regla.tipo }}</td>
+        <td><pre style="white-space: pre-wrap;">{{ regla.media_urls|join('\n') if regla.media_urls else '-' }}</pre></td>
+        <td><pre style="white-space: pre-wrap;">{{ regla.media_tipos|join('\n') if regla.media_tipos else '-' }}</pre></td>
+        <td>{{ regla.rol_keyword or '-' }}</td>
+        <td><pre style="white-space: pre-wrap;">{{ regla.opciones }}</pre></td>
+        <td>{{ regla.header or '-' }}</td>
+        <td>{{ regla.button or '-' }}</td>
+        <td>{{ regla.footer or '-' }}</td>
+        <td>{{ regla.calculo or '-' }}</td>
+        <td>{{ regla.handler or '-' }}</td>
+        <td class="action-cell">
+            <form onsubmit="event.preventDefault();">
+                <button class="edit-btn btn-primary" type="button" onclick='cargarRegla({{ regla|tojson }})'>Editar</button>
+            </form>
+            <form method="POST" action="{{ url_for('configuracion.eliminar_regla', regla_id=regla.id) }}">
+                <button class="delete-btn btn-primary" type="submit">Eliminar</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+
+<script>
+function toggleMediaFields() {
+    const tipo = document.getElementById('tipo').value;
+    const show = ['image', 'video', 'audio', 'document'].includes(tipo);
+    document.getElementById('media').style.display = show ? 'block' : 'none';
+    document.getElementById('label_media_file').style.display = show ? 'block' : 'none';
+    document.getElementById('media_url').style.display = show ? 'block' : 'none';
+    document.getElementById('label_media_url').style.display = show ? 'block' : 'none';
+}
+
+function toggleListFields() {
+    const isList = document.getElementById('tipo').value === 'lista';
+    document.querySelectorAll('.list-field').forEach(el => {
+        el.style.display = isList ? 'block' : 'none';
+    });
+}
+
+function toggleButtonFields() {
+    const isButton = document.getElementById('tipo').value === 'boton';
+    document.querySelectorAll('.button-field').forEach(el => {
+        el.style.display = isButton ? 'block' : 'none';
+    });
+}
+
+function prepareOptions(e) {
+    const tipo = document.getElementById('tipo').value;
+    const opcionesInput = document.getElementById('opciones');
+    if (tipo === 'lista') {
+        const header = document.getElementById('list_header').value;
+        const button = document.getElementById('list_button').value;
+        const footer = document.getElementById('list_footer').value;
+        const sectionsText = document.getElementById('sections').value;
+        let sections;
+        try {
+            sections = JSON.parse(sectionsText || '[]');
+        } catch (err) {
+            sections = [];
+        }
+
+        const invalid = !Array.isArray(sections) || sections.length === 0 || sections.some(sec => !sec.rows || sec.rows.length === 0);
+        if (invalid) {
+            alert('Debes definir al menos una sección con una o más filas.');
+            e.preventDefault();
+            return;
+        }
+
+        const opts = {header, button, footer, sections};
+        opcionesInput.value = JSON.stringify(opts);
+    } else if (tipo === 'boton') {
+        const text = document.getElementById('button_options').value.trim();
+        if (text) {
+            try {
+                JSON.parse(text);
+            } catch (err) {
+                alert('El JSON de opciones de botón no es válido');
+                e.preventDefault();
+                return;
+            }
+        }
+        opcionesInput.value = text;
+    } else {
+        opcionesInput.value = '';
+    }
+}
+document.getElementById('tipo').addEventListener('change', () => {
+    toggleMediaFields();
+    toggleListFields();
+    toggleButtonFields();
+});
+const form = document.getElementById('reglaForm');
+form.addEventListener('submit', prepareOptions);
+window.addEventListener('DOMContentLoaded', () => {
+    toggleMediaFields();
+    toggleListFields();
+    toggleButtonFields();
+});
+
+function cargarRegla(regla) {
+    document.getElementById('regla_id').value = regla.id;
+    document.getElementById('step').value = regla.step || '';
+    document.getElementById('input_text').value = regla.input_text || '';
+    document.getElementById('respuesta').value = regla.respuesta || '';
+    document.getElementById('siguiente_step').value = regla.siguiente_step || '';
+    document.getElementById('tipo').value = regla.tipo || 'texto';
+    document.getElementById('media').value = '';
+    document.getElementById('media_url').value = (regla.media_urls || []).filter(u => u).join(', ');
+    document.getElementById('rol_keyword').value = regla.rol_keyword || '';
+    document.getElementById('calculo').value = regla.calculo || '';
+    document.getElementById('handler').value = regla.handler || '';
+    document.getElementById('list_header').value = regla.header || '';
+    document.getElementById('list_button').value = regla.button || '';
+    document.getElementById('list_footer').value = regla.footer || '';
+    document.getElementById('sections').value = '';
+    document.getElementById('button_options').value = '';
+    document.getElementById('opciones').value = '';
+    if (regla.tipo === 'lista' && regla.opciones) {
+        try {
+            const opts = JSON.parse(regla.opciones);
+            document.getElementById('list_header').value = opts.header || '';
+            document.getElementById('list_button').value = opts.button || '';
+            document.getElementById('list_footer').value = opts.footer || '';
+            document.getElementById('sections').value = JSON.stringify(opts.sections || []);
+            document.getElementById('opciones').value = JSON.stringify(opts);
+        } catch (e) {
+            document.getElementById('opciones').value = regla.opciones || '';
+        }
+    } else if (regla.tipo === 'boton') {
+        document.getElementById('button_options').value = regla.opciones || '';
+        document.getElementById('opciones').value = regla.opciones || '';
+    } else {
+        document.getElementById('opciones').value = regla.opciones || '';
+    }
+    toggleMediaFields();
+    toggleListFields();
+    toggleButtonFields();
+}
+</script>
+{% endblock %}

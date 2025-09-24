@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}Respuestas{% endblock %}
+{% block body_class %}page{% endblock %}
+{% block content %}
+<div class="top-right">
+    <a href="{{ url_for('chat.index') }}">
+        <button class="back-btn btn-primary">Volver al inicio</button>
+    </a>
+</div>
+
+<h2>Respuestas</h2>
+{% if summary %}
+<h3>Resumen</h3>
+<table class="summary-table">
+    <tr>
+        <th>Regla/Step</th>
+        <th>Cantidad</th>
+    </tr>
+    {% for step, count in summary.items() %}
+    <tr>
+        <td>{{ step }}</td>
+        <td>{{ count }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+<table class="fixed-table">
+    <tr>
+        <th>Numero</th>
+        <th>Fecha</th>
+        <th>Mensaje</th>
+        <th>Tipo</th>
+        {% for step in steps %}
+        <th>{{ step|capitalize }}</th>
+        <th>Respuesta usuario {{ step }}</th>
+        {% endfor %}
+    </tr>
+    {% for r in conversaciones %}
+    <tr>
+        <td>{{ r.numero }}</td>
+        <td>{{ r.fecha }}</td>
+        <td>{{ r.mensaje }}</td>
+        <td>{{ r.tipo }}</td>
+        {% for step in steps %}
+        <td>{{ r.get(step, '-') }}</td>
+        <td>{{ r.get('respuesta_' ~ step, '-') }}</td>
+        {% endfor %}
+    </tr>
+    {% endfor %}
+</table>
+{% endblock %}
