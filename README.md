@@ -116,6 +116,8 @@ sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-spa
 ```
 En macOS puedes usar Homebrew (`brew install tesseract tesseract-lang`), y en Windows descarga el instalador oficial. Ajusta la variable `AI_OCR_LANG` si tu instalación no incluye español.
 
+> ℹ️ Si ejecutas la aplicación con Docker (incluyendo Docker Desktop en Windows/macOS), la imagen definida en `Dockerfile` ya instala `tesseract-ocr`, el paquete de idioma en español y dependencias como `ffmpeg`, por lo que no necesitas preparar el host manualmente para procesar catálogos PDF.
+
 ## Instalación local
 ```bash
 python -m venv .venv
