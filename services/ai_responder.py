@@ -301,6 +301,27 @@ class CatalogResponder:
                 raise ValueError(
                     "El PDF no contiene texto utilizable incluso con OCR."
                 )
+=======
+        for page_number, page in enumerate(reader.pages, start=1):
+            try:
+                page_text = page.extract_text() or ""
+            except Exception:
+                logging.warning("No se pudo extraer texto de la página %s", page_number, exc_info=True)
+                page_text = ""
+            for chunk_idx, chunk in enumerate(self._chunk_text(page_text), start=1):
+                if not chunk.strip():
+                    continue
+                metadata.append(
+                    {
+                        "page": page_number,
+                        "chunk": chunk_idx,
+                        "text": chunk,
+                        "source": source_name or os.path.basename(pdf_path),
+                        "skus": self._extract_skus(chunk),
+                    }
+                )
+                chunks.append(chunk)
+        if not chunks:
             raise ValueError("El PDF no contiene texto utilizable.")
 
         embeddings: List[List[float]] = []
