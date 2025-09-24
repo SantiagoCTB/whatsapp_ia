@@ -26,6 +26,11 @@ try:
 except Exception:  # pragma: no cover - OCR es opcional
     pytesseract = None
 
+try:
+    import easyocr  # type: ignore
+except Exception:  # pragma: no cover - OCR es opcional
+    easyocr = None
+
 from config import Config
 from services.db import (
     log_ai_interaction,
@@ -58,6 +63,8 @@ class CatalogResponder:
         self._cache_ttl = Config.AI_CACHE_TTL
         self._last_mtime: float = 0.0
         self._tesseract_ready: Optional[bool] = None
+        self._easyocr_reader: Optional[object] = None
+        self._easyocr_failed = False
 
     @classmethod
     def instance(cls) -> "CatalogResponder":
@@ -123,6 +130,169 @@ class CatalogResponder:
 
         self._tesseract_ready = True
         return True
+
+    def _ensure_easyocr_reader(self):
+        if not Config.AI_OCR_ENABLED or not Config.AI_OCR_EASYOCR_ENABLED:
+            return None
+        if easyocr is None:
+            return None
+        if self._easyocr_failed:
+            return None
+        if self._easyocr_reader is not None:
+            return self._easyocr_reader
+
+        languages = self._resolve_easyocr_langs()
+        try:
+            self._easyocr_reader = easyocr.Reader(languages, gpu=False)
+        except Exception:
+            logging.warning("No se pudo inicializar EasyOCR", exc_info=True)
+            self._easyocr_failed = True
+            self._easyocr_reader = None
+            return None
+
+        return self._easyocr_reader
+
+    @staticmethod
+    def _resolve_easyocr_langs() -> List[str]:
+        raw = (Config.AI_OCR_EASYOCR_LANGS or Config.AI_OCR_LANG or "").strip()
+        if not raw:
+            return ["es", "en"]
+
+        tokens = [tok for tok in re.split(r"[+,;\s]+", raw) if tok]
+        mapping = {
+            "spa": "es",
+            "esp": "es",
+            "es": "es",
+            "eng": "en",
+            "en": "en",
+            "fra": "fr",
+            "fre": "fr",
+            "ita": "it",
+            "por": "pt",
+            "pt": "pt",
+            "deu": "de",
+            "ger": "de",
+        }
+        resolved: List[str] = []
+        for token in tokens:
+            norm = token.strip().lower()
+            if not norm:
+                continue
+            mapped = mapping.get(norm, norm)
+            if mapped not in resolved:
+                resolved.append(mapped)
+        return resolved or ["es", "en"]
+
+    @staticmethod
+    def _compute_pdf_hash(pdf_path: str) -> str:
+        sha1 = hashlib.sha1()
+        try:
+            with open(pdf_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(8192), b""):
+                    if not chunk:
+                        break
+                    sha1.update(chunk)
+        except Exception:
+            logging.warning("No se pudo calcular el hash del PDF, se usará la ruta como clave.", exc_info=True)
+            return hashlib.sha1(pdf_path.encode("utf-8")).hexdigest()
+        return sha1.hexdigest()
+
+    def _ensure_page_image(
+        self,
+        pdf_path: str,
+        page_number: int,
+        pdf_hash: str,
+        image_context: Dict[str, object],
+        pil_image=None,
+    ) -> Optional[str]:
+        if not Config.AI_PAGE_IMAGE_DIR:
+            return None
+
+        cache = image_context.setdefault("cache", {})
+        cached = cache.get(page_number)
+        if cached:
+            return cached
+
+        if pil_image is None:
+            if pdfium is None:
+                image_context.setdefault("error", "missing_libs")
+                return None
+            if image_context.get("doc") is None:
+                try:
+                    image_context["doc"] = pdfium.PdfDocument(pdf_path)
+                except Exception:
+                    logging.warning(
+                        "No se pudo abrir el PDF para generar imágenes", exc_info=True
+                    )
+                    image_context["error"] = "init_failed"
+                    return None
+            doc = image_context.get("doc")
+            try:
+                page = doc[page_number - 1]
+            except Exception:
+                logging.warning(
+                    "No se pudo acceder a la página %s para generar la imagen", page_number, exc_info=True
+                )
+                image_context["error"] = "page_failed"
+                return None
+            try:
+                try:
+                    scale = max(1.0, float(Config.AI_PAGE_IMAGE_SCALE))
+                except Exception:
+                    scale = 2.0
+                bitmap = page.render(scale=scale)
+                pil_image = bitmap.to_pil()
+            except Exception:
+                logging.warning(
+                    "No se pudo renderizar la página %s para imagen", page_number, exc_info=True
+                )
+                image_context["error"] = "render_failed"
+                page.close()
+                return None
+            finally:
+                page.close()
+
+        if pil_image is None:
+            return None
+
+        try:
+            image_format = (Config.AI_PAGE_IMAGE_FORMAT or "JPEG").upper()
+        except Exception:
+            image_format = "JPEG"
+        ext = "jpg" if image_format == "JPEG" else image_format.lower()
+
+        try:
+            if image_format == "JPEG" and getattr(pil_image, "mode", "") in {"RGBA", "P", "LA"}:
+                pil_image = pil_image.convert("RGB")
+            elif getattr(pil_image, "mode", "") == "P":
+                pil_image = pil_image.convert("RGB")
+        except Exception:
+            logging.warning("No se pudo normalizar la imagen de la página %s", page_number, exc_info=True)
+            image_context["error"] = "prepare_failed"
+            return None
+
+        output_dir = os.path.join(Config.AI_PAGE_IMAGE_DIR, pdf_hash)
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"page_{page_number:04d}.{ext}"
+        full_path = os.path.join(output_dir, filename)
+
+        save_kwargs: Dict[str, object] = {}
+        if image_format == "JPEG":
+            try:
+                save_kwargs["quality"] = int(Config.AI_PAGE_IMAGE_QUALITY)
+            except Exception:
+                save_kwargs["quality"] = 85
+
+        try:
+            pil_image.save(full_path, format=image_format, **save_kwargs)
+        except Exception:
+            logging.warning("No se pudo guardar la imagen de la página %s", page_number, exc_info=True)
+            image_context["error"] = "save_failed"
+            return None
+
+        rel_path = os.path.relpath(full_path, Config.MEDIA_ROOT)
+        cache[page_number] = rel_path
+        return rel_path
 
     @staticmethod
     def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 200) -> List[str]:
@@ -227,25 +397,24 @@ class CatalogResponder:
         return text
 
     def _extract_text_via_ocr(
-        self, pdf_path: str, page_number: int, ocr_context: Dict[str, object]
-    ) -> str:
+        self,
+        pdf_path: str,
+        page_number: int,
+        ocr_context: Dict[str, object],
+        image_context: Dict[str, object],
+        pdf_hash: str,
+    ) -> Tuple[str, Optional[str]]:
         """Intenta reconocer texto mediante OCR cuando una página no tiene texto embebido."""
 
         if not Config.AI_OCR_ENABLED:
-            return ""
+            return "", None
         if pdfium is None:
             ocr_context.setdefault("error", "missing_libs")
-            return ""
-        if pytesseract is None:
-            ocr_context.setdefault("error", "missing_libs")
-            return ""
+            return "", None
 
-        if not self._ensure_tesseract_available():
-            ocr_context.setdefault("error", "tesseract_missing")
-            return ""
-
-        if ocr_context.get("error") in {"tesseract_missing", "init_failed"}:
-            return ""
+        fatal_errors = {"missing_libs", "init_failed"}
+        if ocr_context.get("error") in fatal_errors:
+            return "", None
 
         if ocr_context.get("doc") is None:
             try:
@@ -253,7 +422,7 @@ class CatalogResponder:
             except Exception:
                 logging.warning("No se pudo abrir el PDF para OCR", exc_info=True)
                 ocr_context["error"] = "init_failed"
-                return ""
+                return "", None
 
         doc = ocr_context.get("doc")
         try:
@@ -261,24 +430,31 @@ class CatalogResponder:
         except Exception:
             logging.warning("No se pudo acceder a la página %s para OCR", page_number, exc_info=True)
             ocr_context["error"] = "page_failed"
-            return ""
+            return "", None
 
         try:
             dpi = max(72, Config.AI_OCR_DPI)
         except Exception:
             dpi = 220
 
+        pil_image = None
         try:
             scale = dpi / 72.0
             bitmap = page.render(scale=scale)
             pil_image = bitmap.to_pil()
         except Exception:
             logging.warning("No se pudo renderizar la página %s para OCR", page_number, exc_info=True)
-            page.close()
             ocr_context["error"] = "render_failed"
-            return ""
+            return "", None
         finally:
             page.close()
+
+        self._ensure_page_image(pdf_path, page_number, pdf_hash, image_context, pil_image=pil_image)
+
+        text = ""
+        backend_used: Optional[str] = None
+        backends_available = False
+        local_error: Optional[str] = None
 
         tess_kwargs: Dict[str, object] = {}
         lang = (Config.AI_OCR_LANG or "").strip()
@@ -287,40 +463,81 @@ class CatalogResponder:
         if Config.AI_OCR_TESSERACT_CONFIG:
             tess_kwargs["config"] = Config.AI_OCR_TESSERACT_CONFIG
 
-        try:
-            text = pytesseract.image_to_string(pil_image, **tess_kwargs)
-        except Exception as exc:
-            tesseract_mod = getattr(pytesseract, "pytesseract", None)
-
-            if tesseract_mod and isinstance(exc, getattr(tesseract_mod, "TesseractNotFoundError", Exception)):
-                logging.warning("Tesseract no está instalado en el sistema.")
-                ocr_context["error"] = "tesseract_missing"
-                self._tesseract_ready = False
-                return ""
-
-            if (
-                lang
-                and "Failed loading language" in str(exc)
-                and tesseract_mod
-                and hasattr(tesseract_mod, "TesseractError")
-            ):
-                logging.warning(
-                    "No se encontró el paquete de idioma '%s' para Tesseract, se usará el idioma por defecto.",
-                    lang,
-                )
-                tess_kwargs.pop("lang", None)
+        if Config.AI_OCR_TESSERACT_ENABLED and pytesseract is not None:
+            if self._ensure_tesseract_available():
+                backends_available = True
                 try:
                     text = pytesseract.image_to_string(pil_image, **tess_kwargs)
-                except Exception:
-                    logging.warning("Falló el OCR incluso con el idioma por defecto", exc_info=True)
-                    ocr_context["error"] = "ocr_failed"
-                    return ""
-            else:
-                logging.warning("Falló el OCR en la página %s", page_number, exc_info=True)
-                ocr_context["error"] = "ocr_failed"
-                return ""
+                    if text and text.strip():
+                        backend_used = "tesseract"
+                        ocr_context.pop("error", None)
+                        return text, backend_used
+                except Exception as exc:
+                    tesseract_mod = getattr(pytesseract, "pytesseract", None)
+                    not_found_exc = getattr(tesseract_mod, "TesseractNotFoundError", None) if tesseract_mod else None
 
-        return text
+                    if not_found_exc and isinstance(exc, not_found_exc):
+                        logging.warning("Tesseract no está instalado en el sistema.")
+                        local_error = "tesseract_missing"
+                        self._tesseract_ready = False
+                    elif (
+                        lang
+                        and "Failed loading language" in str(exc)
+                        and tesseract_mod
+                        and hasattr(tesseract_mod, "TesseractError")
+                    ):
+                        logging.warning(
+                            "No se encontró el paquete de idioma '%s' para Tesseract, se usará el idioma por defecto.",
+                            lang,
+                        )
+                        tess_kwargs.pop("lang", None)
+                        try:
+                            text = pytesseract.image_to_string(pil_image, **tess_kwargs)
+                            if text and text.strip():
+                                backend_used = "tesseract"
+                                ocr_context.pop("error", None)
+                                return text, backend_used
+                        except Exception:
+                            logging.warning("Falló el OCR incluso con el idioma por defecto", exc_info=True)
+                            local_error = "ocr_failed"
+                    else:
+                        logging.warning("Falló el OCR en la página %s", page_number, exc_info=True)
+                        local_error = "ocr_failed"
+            else:
+                local_error = "tesseract_missing"
+        elif Config.AI_OCR_TESSERACT_ENABLED:
+            local_error = "tesseract_missing"
+
+        if not text.strip() and Config.AI_OCR_EASYOCR_ENABLED:
+            reader = self._ensure_easyocr_reader()
+            if reader is not None:
+                backends_available = True
+                try:
+                    results = reader.readtext(np.array(pil_image), detail=0)
+                    candidate = "\n".join(res.strip() for res in results if res and res.strip())
+                    if candidate.strip():
+                        backend_used = "easyocr"
+                        ocr_context.pop("error", None)
+                        return candidate, backend_used
+                except Exception:
+                    logging.warning("Falló EasyOCR en la página %s", page_number, exc_info=True)
+                    local_error = "ocr_failed"
+            else:
+                if easyocr is None or self._easyocr_failed:
+                    local_error = local_error or "easyocr_missing"
+
+        if backend_used:
+            return text, backend_used
+
+        if not backends_available:
+            if local_error in {"tesseract_missing", "easyocr_missing"}:
+                ocr_context["error"] = local_error
+            else:
+                ocr_context["error"] = local_error or "no_backend"
+        else:
+            ocr_context["error"] = local_error or "ocr_failed"
+
+        return "", None
 
     def reload(self) -> None:
         """Forza recarga desde disco (usado tras ingesta)."""
@@ -340,20 +557,35 @@ class CatalogResponder:
         chunks: List[str] = []
         pdfium_text_context: Dict[str, object] = {"doc": None}
         ocr_context: Dict[str, object] = {"doc": None}
+        image_context: Dict[str, object] = {"doc": None, "cache": {}}
+        pdf_hash = self._compute_pdf_hash(pdf_path)
         try:
             for page_number, page in enumerate(reader.pages, start=1):
+                page_backend: Optional[str] = None
                 try:
                     page_text = page.extract_text() or ""
                 except Exception:
                     logging.warning("No se pudo extraer texto de la página %s", page_number, exc_info=True)
                     page_text = ""
-                if not page_text.strip():
+                if page_text.strip():
+                    page_backend = "pypdf"
+                else:
                     pdfium_text = self._extract_text_via_pdfium(pdf_path, page_number, pdfium_text_context)
                     if pdfium_text.strip():
                         page_text = pdfium_text
+                        page_backend = "pdfium"
                     else:
-                        ocr_text = self._extract_text_via_ocr(pdf_path, page_number, ocr_context)
+                        ocr_text, ocr_backend = self._extract_text_via_ocr(
+                            pdf_path,
+                            page_number,
+                            ocr_context,
+                            image_context,
+                            pdf_hash,
+                        )
                         page_text = ocr_text or ""
+                        page_backend = ocr_backend
+
+                image_path = self._ensure_page_image(pdf_path, page_number, pdf_hash, image_context)
                 for chunk_idx, chunk in enumerate(self._chunk_text(page_text), start=1):
                     if not chunk.strip():
                         continue
@@ -364,11 +596,13 @@ class CatalogResponder:
                             "text": chunk,
                             "source": source_name or os.path.basename(pdf_path),
                             "skus": self._extract_skus(chunk),
+                            "backend": page_backend,
+                            "image": image_path,
                         }
                     )
                     chunks.append(chunk)
         finally:
-            for ctx in (pdfium_text_context, ocr_context):
+            for ctx in (pdfium_text_context, ocr_context, image_context):
                 doc = ctx.get("doc")
                 if doc is not None:
                     try:
@@ -386,6 +620,14 @@ class CatalogResponder:
             if error_reason == "tesseract_missing":
                 raise ValueError(
                     "El PDF no contiene texto utilizable y Tesseract no está instalado en el sistema."
+                )
+            if error_reason == "easyocr_missing":
+                raise ValueError(
+                    "El PDF no contiene texto utilizable y EasyOCR no está disponible. Instala easyocr o habilita otro motor OCR."
+                )
+            if error_reason == "no_backend":
+                raise ValueError(
+                    "El PDF no contiene texto utilizable y no hay motor OCR disponible (instala Tesseract o habilita EasyOCR)."
                 )
             if error_reason in {"init_failed", "render_failed", "ocr_failed", "page_failed"}:
                 raise ValueError(

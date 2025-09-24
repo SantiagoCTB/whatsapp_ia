@@ -15,3 +15,5 @@ pypdf
 redis
 pypdfium2
 pytesseract
+Pillow
+easyocr
