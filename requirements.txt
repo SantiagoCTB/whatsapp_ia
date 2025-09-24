@@ -8,3 +8,8 @@ mysql-connector-python
 vosk
 ffmpeg-python
 concurrent-futures; python_version < "3.2"
+openai>=1.30.0
+faiss-cpu
+numpy
+pypdf
+redis
