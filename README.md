@@ -170,8 +170,5 @@ Recuerda proporcionar un `.env` con todas las variables y exponer MySQL (por eje
 - Configura HTTPS y un dominio válido para que Meta entregue webhooks exitosamente.
 - Monitorea el log `app.log` generado en producción cuando `DEBUG` está desactivado. 
 
-## Próximos pasos sugeridos
-- Automatizar despliegues con CI/CD y migraciones controladas.
-- Añadir pruebas unitarias para handlers y reglas críticas.
-- Extender la capa analítica con alertas (ej. chats sin respuesta en X minutos).
-- Incorporar paginación o archivado de chats históricos para mejorar rendimiento.
+## Próximos pasos
+- Implementación IA para atención de clientes.
