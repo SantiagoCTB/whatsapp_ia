@@ -81,12 +81,19 @@ Las variables se cargan desde `.env` mediante `python-dotenv` y están centraliz
 | `AI_OCR_DPI` | Resolución en DPI al rasterizar páginas para el OCR (por defecto 220). |
 | `AI_OCR_LANG` | Idiomas instalados en Tesseract para el OCR (por defecto `spa+eng`, usa `eng` si solo tienes inglés). |
 | `AI_OCR_TESSERACT_CONFIG` | Parámetros extra de Tesseract (por ejemplo, `--psm 6`). |
+| `AI_OCR_TESSERACT_ENABLED` | Permite desactivar Tesseract sin deshabilitar el OCR completo (por defecto `1`). |
+| `AI_OCR_EASYOCR_ENABLED` | Activa EasyOCR como alternativa cuando Tesseract no está disponible (por defecto `1`). |
+| `AI_OCR_EASYOCR_LANGS` | Lista separada por comas con los idiomas de EasyOCR (ej. `es,en`); si se omite se deriva de `AI_OCR_LANG`. |
+| `AI_PAGE_IMAGE_DIR` | Carpeta donde se guardan las miniaturas de cada página del catálogo (por defecto `static/uploads/catalogos/paginas`). |
+| `AI_PAGE_IMAGE_FORMAT` | Formato de imagen para las vistas previas (`JPEG`, `PNG`, etc.). |
+| `AI_PAGE_IMAGE_SCALE` | Factor de escala al renderizar la página antes de guardar la imagen (por defecto `2.0`). |
+| `AI_PAGE_IMAGE_QUALITY` | Calidad de compresión cuando el formato es JPEG (por defecto `85`). |
 
 ## Requisitos previos
 - Python 3.9+ (incluye `venv`).
 - Servidor MySQL accesible y con base de datos creada.
 - [ffmpeg](https://ffmpeg.org/) instalado en el sistema host (necesario para normalizar audios).
-- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para interpretar catálogos escaneados o con texto embebido en imágenes. Instala también los paquetes de idioma que necesites (por ejemplo, español) si deseas aprovechar el OCR.
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para interpretar catálogos escaneados o con texto embebido en imágenes. Instala también los paquetes de idioma que necesites (por ejemplo, español) si deseas aprovechar el OCR. Si no cuentas con Tesseract, la aplicación intentará usar [EasyOCR](https://www.jaided.ai/easyocr/) (incluido en `requirements.txt`) siempre que `AI_OCR_EASYOCR_ENABLED=1`.
 - Modelo de Vosk en español disponible; el primer uso lo descarga automáticamente (`vosk` >= 0.3).
 - Credenciales activas de la WhatsApp Cloud API y webhook configurado hacia `/webhook`.
 
@@ -170,6 +177,8 @@ Recuerda proporcionar un `.env` con todas las variables y exponer MySQL (por eje
 ## Modo IA conversacional
 - El proyecto incluye un nuevo modo de atención híbrida basado en embeddings y modelos de la plataforma OpenAI. El paso inicial del flujo sigue siendo gestionado por las reglas; para entregar el control a la IA crea una regla que establezca el `step` en `ia_chat` (valor por defecto de `AI_HANDOFF_STEP`).
 - En **Configuración → Modo IA conversacional** puedes activar o desactivar el modo, procesar un PDF con el catálogo del cliente y consultar métricas (fragmentos indexados, fuentes y fecha de actualización). El pipeline aplica: PDF → texto → _chunks_ → embeddings (`text-embedding-3-small`) → búsqueda semántica FAISS → respuesta generada con `gpt-4o-mini`.
+- Durante la ingesta se generan miniaturas JPEG por página dentro de `AI_PAGE_IMAGE_DIR/<hash>/page_XXXX.jpg` y cada fragmento indexado incluye la ruta relativa (`image`) y el método de extracción (`backend`). Estos metadatos permiten enviar al cliente la página exacta del catálogo como soporte visual.
+- El OCR prioriza Tesseract cuando está disponible, pero si no se encuentra la aplicación recurre automáticamente a EasyOCR (configurable mediante las variables `AI_OCR_TESSERACT_ENABLED` y `AI_OCR_EASYOCR_ENABLED`).
 - El worker `services/ai_worker.py` vigila la tabla `mensajes` y responde únicamente cuando el estado del cliente coincide con `AI_HANDOFF_STEP`. El primer mensaje siempre pasa por el motor de reglas; al desactivar la IA, las conversaciones en el paso IA regresan al `INITIAL_STEP`.
 - Las respuestas se cachean de forma opcional en Redis (`REDIS_URL`) para acelerar preguntas frecuentes y se registran en la tabla `ia_logs` junto con la página y SKU sugeridos. El índice FAISS y los metadatos se guardan en `AI_VECTOR_STORE_PATH` (por defecto `data/catalog_index.*`).
 - Variables de entorno relevantes: `OPENAI_API_KEY`, `AI_HANDOFF_STEP`, `AI_VECTOR_STORE_PATH`, `AI_POLL_INTERVAL`, `AI_BATCH_SIZE`, `AI_CACHE_TTL`, `CATALOG_UPLOAD_DIR`, `AI_FALLBACK_MESSAGE` y `REDIS_URL`. Al activar el modo IA se actualiza automáticamente el puntero de mensajes procesados para evitar respuestas duplicadas.

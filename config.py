@@ -49,11 +49,22 @@ class Config:
     AI_OCR_DPI = int(os.getenv('AI_OCR_DPI', 220))
     AI_OCR_LANG = os.getenv('AI_OCR_LANG', 'spa+eng')
     AI_OCR_TESSERACT_CONFIG = os.getenv('AI_OCR_TESSERACT_CONFIG')
+    AI_OCR_TESSERACT_ENABLED = _env_bool('AI_OCR_TESSERACT_ENABLED', True)
+    AI_OCR_EASYOCR_ENABLED = _env_bool('AI_OCR_EASYOCR_ENABLED', True)
+    AI_OCR_EASYOCR_LANGS = os.getenv('AI_OCR_EASYOCR_LANGS')
     REDIS_URL = os.getenv('REDIS_URL')
     CATALOG_UPLOAD_DIR = os.getenv(
         'CATALOG_UPLOAD_DIR',
         os.path.join(MEDIA_ROOT, 'catalogos')
     )
+    AI_PAGE_IMAGE_DIR = os.getenv(
+        'AI_PAGE_IMAGE_DIR',
+        os.path.join(CATALOG_UPLOAD_DIR, 'paginas')
+    )
+    AI_PAGE_IMAGE_FORMAT = os.getenv('AI_PAGE_IMAGE_FORMAT', 'JPEG')
+    AI_PAGE_IMAGE_SCALE = float(os.getenv('AI_PAGE_IMAGE_SCALE', 2.0))
+    AI_PAGE_IMAGE_QUALITY = int(os.getenv('AI_PAGE_IMAGE_QUALITY', 85))
 
     os.makedirs(MEDIA_ROOT, exist_ok=True)
     os.makedirs(CATALOG_UPLOAD_DIR, exist_ok=True)
+    os.makedirs(AI_PAGE_IMAGE_DIR, exist_ok=True)
