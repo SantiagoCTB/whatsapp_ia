@@ -57,6 +57,7 @@ class CatalogResponder:
         self._redis = self._init_redis()
         self._cache_ttl = Config.AI_CACHE_TTL
         self._last_mtime: float = 0.0
+        self._tesseract_ready: Optional[bool] = None
 
     @classmethod
     def instance(cls) -> "CatalogResponder":
@@ -99,6 +100,29 @@ class CatalogResponder:
             with open(self._metadata_path, "r", encoding="utf-8") as fh:
                 self._metadata = json.load(fh)
             self._last_mtime = mtime
+
+    def _ensure_tesseract_available(self) -> bool:
+        if self._tesseract_ready is not None:
+            return self._tesseract_ready
+
+        if pytesseract is None:
+            self._tesseract_ready = False
+            return False
+
+        try:
+            pytesseract.get_tesseract_version()
+        except Exception as exc:
+            tesseract_mod = getattr(pytesseract, "pytesseract", None)
+            not_found_exc = getattr(tesseract_mod, "TesseractNotFoundError", None) if tesseract_mod else None
+            if not_found_exc is not None and isinstance(exc, not_found_exc):
+                logging.warning("Tesseract no está instalado en el sistema.")
+            else:
+                logging.warning("No se pudo comprobar la instalación de Tesseract", exc_info=True)
+            self._tesseract_ready = False
+            return False
+
+        self._tesseract_ready = True
+        return True
 
     @staticmethod
     def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 200) -> List[str]:
@@ -183,6 +207,7 @@ class CatalogResponder:
         text = ""
         try:
             textpage = page.get_textpage()
+            text = textpage.get_text_bounded() or ""
             text = textpage.get_text_range() or ""
         except Exception:
             logging.warning(
@@ -208,8 +233,15 @@ class CatalogResponder:
 
         if not Config.AI_OCR_ENABLED:
             return ""
-        if pytesseract is None or pdfium is None:
+        if pdfium is None:
             ocr_context.setdefault("error", "missing_libs")
+            return ""
+        if pytesseract is None:
+            ocr_context.setdefault("error", "missing_libs")
+            return ""
+
+        if not self._ensure_tesseract_available():
+            ocr_context.setdefault("error", "tesseract_missing")
             return ""
 
         if ocr_context.get("error") in {"tesseract_missing", "init_failed"}:
@@ -263,6 +295,7 @@ class CatalogResponder:
             if tesseract_mod and isinstance(exc, getattr(tesseract_mod, "TesseractNotFoundError", Exception)):
                 logging.warning("Tesseract no está instalado en el sistema.")
                 ocr_context["error"] = "tesseract_missing"
+                self._tesseract_ready = False
                 return ""
 
             if (
