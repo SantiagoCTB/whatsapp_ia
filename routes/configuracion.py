@@ -1,8 +1,16 @@
+import logging
 from flask import Blueprint, render_template, request, redirect, session, url_for, jsonify
-from services.db import get_connection
+from services.db import (
+    get_connection,
+    get_ai_settings,
+    reset_ai_conversations,
+    set_ai_enabled,
+    set_ai_last_processed_to_latest,
+)
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from config import Config
+from services.ai_responder import get_catalog_responder
 import os
 import uuid
 import re
@@ -338,6 +346,63 @@ def _reglas_view(template_name):
         return render_template(template_name, reglas=reglas)
     finally:
         conn.close()
+
+
+@config_bp.route('/configuracion/ia', methods=['GET', 'POST'])
+def ia_settings():
+    if not _require_admin():
+        return redirect(url_for("auth.login"))
+
+    message = None
+    error = None
+    responder = get_catalog_responder()
+    stats_result = None
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if action == 'toggle':
+            enabled = request.form.get('enabled') == '1'
+            set_ai_enabled(enabled)
+            if enabled:
+                set_ai_last_processed_to_latest()
+                message = "Modo IA activado."
+            else:
+                reset_ai_conversations(Config.AI_HANDOFF_STEP, Config.INITIAL_STEP)
+                message = "Modo IA desactivado."
+        elif action == 'ingest':
+            if not Config.OPENAI_API_KEY:
+                error = 'Configura la variable OPENAI_API_KEY antes de cargar un catálogo.'
+            else:
+                file = request.files.get('catalogo')
+                if not file or not file.filename.lower().endswith('.pdf'):
+                    error = 'Adjunta un archivo PDF válido.'
+                else:
+                    filename = secure_filename(file.filename)
+                    unique_name = f"{uuid.uuid4().hex}_{filename}"
+                    dest_path = os.path.join(Config.CATALOG_UPLOAD_DIR, unique_name)
+                    file.save(dest_path)
+                    try:
+                        stats_result = responder.ingest_pdf(dest_path, source_name=filename)
+                        message = f"Catálogo procesado correctamente ({stats_result['chunks']} fragmentos)."
+                    except Exception as exc:
+                        logging.exception("Error al procesar el catálogo para IA")
+                        error = f"No se pudo procesar el catálogo: {exc}"
+        else:
+            error = 'Acción no soportada.'
+
+    settings = get_ai_settings()
+    summary = stats_result or responder.get_summary()
+    return render_template(
+        'ia_settings.html',
+        settings=settings,
+        summary=summary,
+        message=message,
+        error=error,
+        handoff_step=Config.AI_HANDOFF_STEP,
+        has_openai_key=bool(Config.OPENAI_API_KEY),
+        Config=Config,
+    )
+
 
 @config_bp.route('/configuracion', methods=['GET', 'POST'])
 def configuracion():

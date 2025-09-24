@@ -150,14 +150,21 @@ Recuerda proporcionar un `.env` con todas las variables y exponer MySQL (por eje
 - **Sesiones**: si un usuario queda inactivo más del `SESSION_TIMEOUT`, el flujo se reinicia automáticamente (`delete_chat_state`). 
 
 ## Manejo de medios y transcripción
-- Los archivos subidos por asesores se guardan en `MEDIA_ROOT` y se exponen vía `static/uploads/`. 
-- Los medios entrantes desde WhatsApp se descargan con el token de Meta y se almacenan localmente. 
-- Audios entrantes generan un job en `services/job_queue.py`; `services/tasks.py` convierte, transcribe y reinyecta el texto al flujo. 
-- `services/transcripcion.py` usa ffmpeg para normalizar a WAV mono 16 kHz, luego Vosk para convertir a texto. Si la duración excede `MAX_TRANSCRIPTION_DURATION_MS` o el tiempo promedio supera el umbral, la transcripción se omite. 
+- Los archivos subidos por asesores se guardan en `MEDIA_ROOT` y se exponen vía `static/uploads/`.
+- Los medios entrantes desde WhatsApp se descargan con el token de Meta y se almacenan localmente.
+- Audios entrantes generan un job en `services/job_queue.py`; `services/tasks.py` convierte, transcribe y reinyecta el texto al flujo.
+- `services/transcripcion.py` usa ffmpeg para normalizar a WAV mono 16 kHz, luego Vosk para convertir a texto. Si la duración excede `MAX_TRANSCRIPTION_DURATION_MS` o el tiempo promedio supera el umbral, la transcripción se omite.
+
+## Modo IA conversacional
+- El proyecto incluye un nuevo modo de atención híbrida basado en embeddings y modelos de la plataforma OpenAI. El paso inicial del flujo sigue siendo gestionado por las reglas; para entregar el control a la IA crea una regla que establezca el `step` en `ia_chat` (valor por defecto de `AI_HANDOFF_STEP`).
+- En **Configuración → Modo IA conversacional** puedes activar o desactivar el modo, procesar un PDF con el catálogo del cliente y consultar métricas (fragmentos indexados, fuentes y fecha de actualización). El pipeline aplica: PDF → texto → _chunks_ → embeddings (`text-embedding-3-small`) → búsqueda semántica FAISS → respuesta generada con `gpt-4o-mini`.
+- El worker `services/ai_worker.py` vigila la tabla `mensajes` y responde únicamente cuando el estado del cliente coincide con `AI_HANDOFF_STEP`. El primer mensaje siempre pasa por el motor de reglas; al desactivar la IA, las conversaciones en el paso IA regresan al `INITIAL_STEP`.
+- Las respuestas se cachean de forma opcional en Redis (`REDIS_URL`) para acelerar preguntas frecuentes y se registran en la tabla `ia_logs` junto con la página y SKU sugeridos. El índice FAISS y los metadatos se guardan en `AI_VECTOR_STORE_PATH` (por defecto `data/catalog_index.*`).
+- Variables de entorno relevantes: `OPENAI_API_KEY`, `AI_HANDOFF_STEP`, `AI_VECTOR_STORE_PATH`, `AI_POLL_INTERVAL`, `AI_BATCH_SIZE`, `AI_CACHE_TTL`, `CATALOG_UPLOAD_DIR`, `AI_FALLBACK_MESSAGE` y `REDIS_URL`. Al activar el modo IA se actualiza automáticamente el puntero de mensajes procesados para evitar respuestas duplicadas.
 
 ## Exportes y analítica
-- `routes/tablero_routes.py` expone JSON para gráficos de palabras frecuentes, top números, volumen por día/hora y desglose por tipo o rol. Esto permite construir widgets en `tablero.html`. 
-- `routes/export_routes.py` agrega la información relevante de una conversación (mensajes, últimos pasos, etc.) y la serializa a JSON/CSV bajo demanda. 
+- `routes/tablero_routes.py` expone JSON para gráficos de palabras frecuentes, top números, volumen por día/hora y desglose por tipo o rol. Esto permite construir widgets en `tablero.html`.
+- `routes/export_routes.py` agrega la información relevante de una conversación (mensajes, últimos pasos, etc.) y la serializa a JSON/CSV bajo demanda.
 
 ## Scripts y mantenimiento
 - `scripts/rehash_passwords.py` ayuda a migrar contraseñas antiguas (SHA-256 plano) a hashes modernos. Ejecuta el script en un entorno controlado, solicitando la contraseña actual de cada usuario. 

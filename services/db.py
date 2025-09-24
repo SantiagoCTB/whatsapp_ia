@@ -1,3 +1,5 @@
+import json
+
 import mysql.connector
 from werkzeug.security import generate_password_hash
 from config import Config
@@ -279,6 +281,40 @@ def init_db():
     if not c.fetchone():
         c.execute("ALTER TABLE chat_state ADD COLUMN estado VARCHAR(20);")
 
+    # Configuración global de IA y bitácora
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS ia_settings (
+      id TINYINT PRIMARY KEY,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      last_processed_message_id INT DEFAULT 0,
+      vector_store_path TEXT,
+      catalog_updated_at DATETIME,
+      catalog_stats TEXT,
+      updated_at DATETIME
+    ) ENGINE=InnoDB;
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS ia_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      numero VARCHAR(20) NOT NULL,
+      pregunta TEXT,
+      respuesta LONGTEXT,
+      metadata LONGTEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB;
+    """)
+
+    c.execute(
+        """
+        INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
+        SELECT 1, %s, 0, %s, NULL, NULL, NOW()
+          FROM DUAL
+         WHERE NOT EXISTS (SELECT 1 FROM ia_settings WHERE id = 1)
+        """,
+        (1 if Config.AI_MODE_DEFAULT else 0, Config.AI_VECTOR_STORE_PATH),
+    )
+
     # ---- SEED admin (con PBKDF2 de Werkzeug) ----
     admin_hash = generate_password_hash('admin123')
     c.execute("""
@@ -538,5 +574,174 @@ def assign_role_to_user(user_id, role_keyword, role_name=None):
         role_id = c.lastrowid
     # Asignar rol al usuario
     c.execute("INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (%s, %s)", (user_id, role_id))
+    conn.commit()
+    conn.close()
+
+
+def get_ai_settings():
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute(
+        """
+        SELECT enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at
+          FROM ia_settings
+         WHERE id = 1
+        """
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return {
+            "enabled": Config.AI_MODE_DEFAULT,
+            "last_processed_message_id": 0,
+            "vector_store_path": Config.AI_VECTOR_STORE_PATH,
+            "catalog_updated_at": None,
+            "catalog_stats": None,
+            "updated_at": None,
+        }
+    stats = None
+    if row[4]:
+        try:
+            stats = json.loads(row[4])
+        except Exception:
+            stats = None
+    return {
+        "enabled": bool(row[0]),
+        "last_processed_message_id": row[1] or 0,
+        "vector_store_path": row[2],
+        "catalog_updated_at": row[3],
+        "catalog_stats": stats,
+        "updated_at": row[5],
+    }
+
+
+def is_ai_enabled():
+    settings = get_ai_settings()
+    return bool(settings.get("enabled"))
+
+
+def set_ai_enabled(enabled):
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute(
+        "UPDATE ia_settings SET enabled=%s, updated_at=NOW() WHERE id=1",
+        (1 if enabled else 0,),
+    )
+    if c.rowcount == 0:
+        c.execute(
+            """
+            INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
+            VALUES (1, %s, 0, %s, NULL, NULL, NOW())
+            """,
+            (1 if enabled else 0, Config.AI_VECTOR_STORE_PATH),
+        )
+    conn.commit()
+    conn.close()
+
+
+def update_ai_last_processed(message_id):
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute(
+        "UPDATE ia_settings SET last_processed_message_id=%s, updated_at=NOW() WHERE id=1",
+        (int(message_id),),
+    )
+    if c.rowcount == 0:
+        c.execute(
+            """
+            INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
+            VALUES (1, %s, %s, %s, NULL, NULL, NOW())
+            """,
+            (1 if Config.AI_MODE_DEFAULT else 0, int(message_id), Config.AI_VECTOR_STORE_PATH),
+        )
+    conn.commit()
+    conn.close()
+
+
+def set_ai_last_processed_to_latest():
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute("SELECT IFNULL(MAX(id), 0) FROM mensajes")
+    last = c.fetchone()[0] or 0
+    c.execute(
+        "UPDATE ia_settings SET last_processed_message_id=%s, updated_at=NOW() WHERE id=1",
+        (last,),
+    )
+    if c.rowcount == 0:
+        c.execute(
+            """
+            INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
+            VALUES (1, %s, %s, %s, NULL, NULL, NOW())
+            """,
+            (1 if Config.AI_MODE_DEFAULT else 0, last, Config.AI_VECTOR_STORE_PATH),
+        )
+    conn.commit()
+    conn.close()
+    return last
+
+
+def update_ai_catalog_metadata(stats):
+    payload = json.dumps(stats, ensure_ascii=False) if stats else None
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute(
+        "UPDATE ia_settings SET catalog_updated_at=NOW(), catalog_stats=%s, vector_store_path=%s, updated_at=NOW() WHERE id=1",
+        (payload, Config.AI_VECTOR_STORE_PATH),
+    )
+    if c.rowcount == 0:
+        c.execute(
+            """
+            INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
+            VALUES (1, %s, 0, %s, NOW(), %s, NOW())
+            """,
+            (1 if Config.AI_MODE_DEFAULT else 0, Config.AI_VECTOR_STORE_PATH, payload),
+        )
+    conn.commit()
+    conn.close()
+
+
+def reset_ai_conversations(from_step, to_step):
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute(
+        "UPDATE chat_state SET step=%s, estado='espera_usuario' WHERE LOWER(COALESCE(step, '')) = %s",
+        (to_step, (from_step or '').lower()),
+    )
+    conn.commit()
+    affected = c.rowcount
+    conn.close()
+    return affected
+
+
+def get_messages_for_ai(after_id, handoff_step, limit):
+    conn = get_connection()
+    c    = conn.cursor(dictionary=True)
+    c.execute(
+        """
+        SELECT m.id, m.numero, m.mensaje
+          FROM mensajes m
+          JOIN chat_state cs ON cs.numero = m.numero
+         WHERE m.id > %s
+           AND m.tipo = 'cliente'
+           AND TRIM(COALESCE(m.mensaje, '')) <> ''
+           AND LOWER(COALESCE(cs.step, '')) = %s
+         ORDER BY m.id ASC
+         LIMIT %s
+        """,
+        (after_id, (handoff_step or '').lower(), limit),
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows or []
+
+
+def log_ai_interaction(numero, pregunta, respuesta, metadata=None):
+    payload = json.dumps(metadata, ensure_ascii=False) if metadata is not None else None
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute(
+        "INSERT INTO ia_logs (numero, pregunta, respuesta, metadata, created_at) VALUES (%s, %s, %s, %s, NOW())",
+        (numero, pregunta, respuesta, payload),
+    )
     conn.commit()
     conn.close()

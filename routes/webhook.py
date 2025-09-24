@@ -11,6 +11,7 @@ from services.db import (
     get_chat_state,
     update_chat_state,
     delete_chat_state,
+    is_ai_enabled,
 )
 from services.whatsapp_api import download_audio, get_media_url, enviar_mensaje
 from services.job_queue import enqueue_transcription
@@ -324,6 +325,12 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
     if not step_db:
         set_user_step(numero, Config.INITIAL_STEP)
         process_step_chain(numero, 'iniciar')
+        return
+
+    step_lower = (step_db or '').strip().lower()
+    ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
+    if ai_step and step_lower == ai_step and is_ai_enabled():
+        update_chat_state(numero, step_db, 'ia_pendiente')
         return
 
     text_norm = normalize_text(texto or "")
