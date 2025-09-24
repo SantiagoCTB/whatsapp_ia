@@ -84,6 +84,8 @@ Las variables se cargan desde `.env` mediante `python-dotenv` y están centraliz
 | `AI_OCR_TESSERACT_ENABLED` | Permite desactivar Tesseract sin deshabilitar el OCR completo (por defecto `1`). |
 | `AI_OCR_EASYOCR_ENABLED` | Activa EasyOCR como alternativa cuando Tesseract no está disponible (por defecto `1`). |
 | `AI_OCR_EASYOCR_LANGS` | Lista separada por comas con los idiomas de EasyOCR (ej. `es,en`); si se omite se deriva de `AI_OCR_LANG`. |
+| `AI_OCR_EASYOCR_DOWNLOAD_ENABLED` | Permite que EasyOCR descargue automáticamente sus modelos si no existen (por defecto `0`). Actívalo solo si puedes esperar la descarga durante la ingesta del catálogo. |
+| `AI_OCR_EASYOCR_VERBOSE` | Rehabilita los mensajes detallados/barras de progreso de EasyOCR (por defecto `0`). |
 | `AI_PAGE_IMAGE_DIR` | Carpeta donde se guardan las miniaturas de cada página del catálogo (por defecto `static/uploads/catalogos/paginas`). |
 | `AI_PAGE_IMAGE_FORMAT` | Formato de imagen para las vistas previas (`JPEG`, `PNG`, etc.). |
 | `AI_PAGE_IMAGE_SCALE` | Factor de escala al renderizar la página antes de guardar la imagen (por defecto `2.0`). |
@@ -93,7 +95,7 @@ Las variables se cargan desde `.env` mediante `python-dotenv` y están centraliz
 - Python 3.9+ (incluye `venv`).
 - Servidor MySQL accesible y con base de datos creada.
 - [ffmpeg](https://ffmpeg.org/) instalado en el sistema host (necesario para normalizar audios).
-- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para interpretar catálogos escaneados o con texto embebido en imágenes. Instala también los paquetes de idioma que necesites (por ejemplo, español) si deseas aprovechar el OCR. Si no cuentas con Tesseract, la aplicación intentará usar [EasyOCR](https://www.jaided.ai/easyocr/) (incluido en `requirements.txt`) siempre que `AI_OCR_EASYOCR_ENABLED=1`.
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para interpretar catálogos escaneados o con texto embebido en imágenes. Instala también los paquetes de idioma que necesites (por ejemplo, español) si deseas aprovechar el OCR. Si no cuentas con Tesseract, la aplicación intentará usar [EasyOCR](https://www.jaided.ai/easyocr/) (incluido en `requirements.txt`) siempre que `AI_OCR_EASYOCR_ENABLED=1`. Habilita `AI_OCR_EASYOCR_DOWNLOAD_ENABLED=1` únicamente si deseas que EasyOCR descargue los modelos automáticamente durante la primera ingesta.
 - Modelo de Vosk en español disponible; el primer uso lo descarga automáticamente (`vosk` >= 0.3).
 - Credenciales activas de la WhatsApp Cloud API y webhook configurado hacia `/webhook`.
 

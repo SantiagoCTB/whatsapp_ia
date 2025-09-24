@@ -1,4 +1,5 @@
 import json
+import inspect
 import logging
 import os
 import threading
@@ -143,7 +144,30 @@ class CatalogResponder:
 
         languages = self._resolve_easyocr_langs()
         try:
-            self._easyocr_reader = easyocr.Reader(languages, gpu=False)
+            reader_kwargs = {"gpu": False}
+            try:
+                signature = inspect.signature(easyocr.Reader)
+            except (TypeError, ValueError):
+                signature = None
+
+            if signature is not None:
+                parameters = signature.parameters
+                if "download_enabled" in parameters:
+                    reader_kwargs["download_enabled"] = getattr(
+                        Config, "AI_OCR_EASYOCR_DOWNLOAD_ENABLED", False
+                    )
+                if "verbose" in parameters:
+                    reader_kwargs["verbose"] = getattr(Config, "AI_OCR_EASYOCR_VERBOSE", False)
+
+            self._easyocr_reader = easyocr.Reader(languages, **reader_kwargs)
+        except FileNotFoundError:
+            logging.warning(
+                "EasyOCR no cuenta con los modelos requeridos. Descárgalos previamente o activa "
+                "AI_OCR_EASYOCR_DOWNLOAD_ENABLED=1 para permitir la descarga automática."
+            )
+            self._easyocr_failed = True
+            self._easyocr_reader = None
+            return None
         except Exception:
             logging.warning("No se pudo inicializar EasyOCR", exc_info=True)
             self._easyocr_failed = True
@@ -623,7 +647,9 @@ class CatalogResponder:
                 )
             if error_reason == "easyocr_missing":
                 raise ValueError(
-                    "El PDF no contiene texto utilizable y EasyOCR no está disponible. Instala easyocr o habilita otro motor OCR."
+                    "El PDF no contiene texto utilizable y EasyOCR no está disponible. Instala easyocr, descarga los modelos "
+                    "necesarios o activa AI_OCR_EASYOCR_DOWNLOAD_ENABLED=1 para permitir la descarga automática, o habilita otro "
+                    "motor OCR."
                 )
             if error_reason == "no_backend":
                 raise ValueError(
