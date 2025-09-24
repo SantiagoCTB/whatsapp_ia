@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block title %}Modo IA{% endblock %}
+{% block body_class %}page{% endblock %}
+{% block content %}
+<div class="top-right">
+    <a href="{{ url_for('configuracion.configuracion') }}">
+        <button class="back-btn btn-primary">Volver a reglas</button>
+    </a>
+</div>
+
+<h2>Modo IA conversacional</h2>
+
+{% if message %}
+<div style="background:#e8f5e9;color:#256029;padding:12px;border-radius:8px;margin-bottom:12px;">
+    {{ message }}
+</div>
+{% endif %}
+{% if error %}
+<div style="background:#fdecea;color:#c62828;padding:12px;border-radius:8px;margin-bottom:12px;">
+    {{ error }}
+</div>
+{% endif %}
+
+<div style="border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin-bottom:20px;">
+    <h3>Estado general</h3>
+    <p><strong>IA activada:</strong> {{ 'Sí' if settings.enabled else 'No' }}</p>
+    <p><strong>Paso de traspaso:</strong> {{ handoff_step or 'No definido' }}</p>
+    <p><strong>OPENAI_API_KEY configurada:</strong> {{ 'Sí' if has_openai_key else 'No' }}</p>
+    <p><strong>Última actualización de catálogo:</strong> {{ settings.catalog_updated_at or 'Sin registros' }}</p>
+    <ul>
+        <li>Fragmentos indexados: {{ summary.chunks or 0 }}</li>
+        <li>Páginas detectadas: {{ summary.pages or 0 }}</li>
+        <li>Fuentes: {{ summary.sources|join(', ') if summary.sources else 'Sin catálogos cargados' }}</li>
+    </ul>
+    <form method="POST" style="margin-top:12px;">
+        <input type="hidden" name="action" value="toggle">
+        <input type="hidden" name="enabled" value="{{ 0 if settings.enabled else 1 }}">
+        <button class="btn-primary" type="submit">
+            {{ 'Desactivar IA' if settings.enabled else 'Activar IA' }}
+        </button>
+    </form>
+    <p style="margin-top:12px;font-size:14px;color:#424242;">
+        Para que la IA responda automáticamente, crea una regla que cambie el paso del cliente a <code>{{ handoff_step }}</code> después del mensaje de bienvenida.
+    </p>
+</div>
+
+<div style="border:1px solid #e0e0e0;border-radius:8px;padding:16px;">
+    <h3>Procesar catálogo PDF</h3>
+    <p>El archivo se convertirá en texto, se dividirá en fragmentos y se generarán embeddings con <code>{{ Config.AI_EMBED_MODEL }}</code>. El bot usará <code>{{ Config.AI_GEN_MODEL }}</code> para responder.</p>
+    {% if not has_openai_key %}
+    <p style="color:#c62828;">Configura la variable <code>OPENAI_API_KEY</code> antes de cargar el catálogo.</p>
+    {% endif %}
+    <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="ingest">
+        <label for="catalogo">Catálogo PDF:</label>
+        <input id="catalogo" name="catalogo" type="file" accept="application/pdf" {% if not has_openai_key %}disabled{% endif %}>
+        <button class="btn-primary" type="submit" {% if not has_openai_key %}disabled{% endif %}>Procesar catálogo</button>
+    </form>
+    <p style="margin-top:12px;font-size:14px;color:#424242;">
+        Cada respuesta registrará los SKU y páginas consultados en la tabla de auditoría (<code>ia_logs</code>) y se cacheará en Redis si está disponible.
+    </p>
+    <p style="margin-top:4px;font-size:13px;color:#616161;">
+        ¿Tu PDF es un escaneo o contiene precios como imagen? Instala Tesseract + el idioma configurado en <code>AI_OCR_LANG</code> (por defecto <code>{{ Config.AI_OCR_LANG }}</code>) para que el sistema ejecute OCR automático durante la ingesta.
+    </p>
+</div>
+{% endblock %}

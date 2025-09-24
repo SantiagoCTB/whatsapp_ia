@@ -77,12 +77,17 @@ Las variables se cargan desde `.env` mediante `python-dotenv` y están centraliz
 | `MEDIA_ROOT` | Ruta persistente para guardar archivos subidos; por defecto `static/uploads`. |
 | `MAX_TRANSCRIPTION_DURATION_MS`, `TRANSCRIPTION_MAX_AVG_TIME_SEC` | Límites para controlar la transcripción de audios. |
 | `INIT_DB_ON_START` | (Opcional) Igual a `1` para ejecutar `init_db()` automáticamente al iniciar la app. |
+| `AI_OCR_ENABLED` | Igual a `1` para activar el OCR en páginas sin texto embebido (requiere Tesseract). |
+| `AI_OCR_DPI` | Resolución en DPI al rasterizar páginas para el OCR (por defecto 220). |
+| `AI_OCR_LANG` | Idiomas instalados en Tesseract para el OCR (por defecto `spa+eng`, usa `eng` si solo tienes inglés). |
+| `AI_OCR_TESSERACT_CONFIG` | Parámetros extra de Tesseract (por ejemplo, `--psm 6`). |
 
 ## Requisitos previos
 - Python 3.9+ (incluye `venv`).
 - Servidor MySQL accesible y con base de datos creada.
-- [ffmpeg](https://ffmpeg.org/) instalado en el sistema host (necesario para normalizar audios). 
-- Modelo de Vosk en español disponible; el primer uso lo descarga automáticamente (`vosk` >= 0.3). 
+- [ffmpeg](https://ffmpeg.org/) instalado en el sistema host (necesario para normalizar audios).
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para interpretar catálogos escaneados o con texto embebido en imágenes. Instala también los paquetes de idioma que necesites (por ejemplo, español) si deseas aprovechar el OCR.
+- Modelo de Vosk en español disponible; el primer uso lo descarga automáticamente (`vosk` >= 0.3).
 - Credenciales activas de la WhatsApp Cloud API y webhook configurado hacia `/webhook`.
 
 Para instalar `ffmpeg` manualmente:
@@ -93,7 +98,14 @@ sudo apt-get update && sudo apt-get install -y ffmpeg
 # macOS (Homebrew)
 brew install ffmpeg
 ```
-Si usas contenedores, añade la instalación al `Dockerfile` o a la imagen base. 
+Si usas contenedores, añade la instalación al `Dockerfile` o a la imagen base.
+
+Para habilitar el OCR en catálogos escaneados instala Tesseract y sus idiomas (ejemplo en Ubuntu/Debian):
+
+```bash
+sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-spa
+```
+En macOS puedes usar Homebrew (`brew install tesseract tesseract-lang`), y en Windows descarga el instalador oficial. Ajusta la variable `AI_OCR_LANG` si tu instalación no incluye español.
 
 ## Instalación local
 ```bash
@@ -150,14 +162,21 @@ Recuerda proporcionar un `.env` con todas las variables y exponer MySQL (por eje
 - **Sesiones**: si un usuario queda inactivo más del `SESSION_TIMEOUT`, el flujo se reinicia automáticamente (`delete_chat_state`). 
 
 ## Manejo de medios y transcripción
-- Los archivos subidos por asesores se guardan en `MEDIA_ROOT` y se exponen vía `static/uploads/`. 
-- Los medios entrantes desde WhatsApp se descargan con el token de Meta y se almacenan localmente. 
-- Audios entrantes generan un job en `services/job_queue.py`; `services/tasks.py` convierte, transcribe y reinyecta el texto al flujo. 
-- `services/transcripcion.py` usa ffmpeg para normalizar a WAV mono 16 kHz, luego Vosk para convertir a texto. Si la duración excede `MAX_TRANSCRIPTION_DURATION_MS` o el tiempo promedio supera el umbral, la transcripción se omite. 
+- Los archivos subidos por asesores se guardan en `MEDIA_ROOT` y se exponen vía `static/uploads/`.
+- Los medios entrantes desde WhatsApp se descargan con el token de Meta y se almacenan localmente.
+- Audios entrantes generan un job en `services/job_queue.py`; `services/tasks.py` convierte, transcribe y reinyecta el texto al flujo.
+- `services/transcripcion.py` usa ffmpeg para normalizar a WAV mono 16 kHz, luego Vosk para convertir a texto. Si la duración excede `MAX_TRANSCRIPTION_DURATION_MS` o el tiempo promedio supera el umbral, la transcripción se omite.
+
+## Modo IA conversacional
+- El proyecto incluye un nuevo modo de atención híbrida basado en embeddings y modelos de la plataforma OpenAI. El paso inicial del flujo sigue siendo gestionado por las reglas; para entregar el control a la IA crea una regla que establezca el `step` en `ia_chat` (valor por defecto de `AI_HANDOFF_STEP`).
+- En **Configuración → Modo IA conversacional** puedes activar o desactivar el modo, procesar un PDF con el catálogo del cliente y consultar métricas (fragmentos indexados, fuentes y fecha de actualización). El pipeline aplica: PDF → texto → _chunks_ → embeddings (`text-embedding-3-small`) → búsqueda semántica FAISS → respuesta generada con `gpt-4o-mini`.
+- El worker `services/ai_worker.py` vigila la tabla `mensajes` y responde únicamente cuando el estado del cliente coincide con `AI_HANDOFF_STEP`. El primer mensaje siempre pasa por el motor de reglas; al desactivar la IA, las conversaciones en el paso IA regresan al `INITIAL_STEP`.
+- Las respuestas se cachean de forma opcional en Redis (`REDIS_URL`) para acelerar preguntas frecuentes y se registran en la tabla `ia_logs` junto con la página y SKU sugeridos. El índice FAISS y los metadatos se guardan en `AI_VECTOR_STORE_PATH` (por defecto `data/catalog_index.*`). Si el PDF no incluye texto embebido, el pipeline intentará OCR local con Tesseract (`pypdfium2` + `pytesseract`) antes de dar error.
+- Variables de entorno relevantes: `OPENAI_API_KEY`, `AI_HANDOFF_STEP`, `AI_VECTOR_STORE_PATH`, `AI_POLL_INTERVAL`, `AI_BATCH_SIZE`, `AI_CACHE_TTL`, `CATALOG_UPLOAD_DIR`, `AI_FALLBACK_MESSAGE`, `AI_OCR_ENABLED`, `AI_OCR_LANG`, `AI_OCR_DPI` y `REDIS_URL`. Al activar el modo IA se actualiza automáticamente el puntero de mensajes procesados para evitar respuestas duplicadas.
 
 ## Exportes y analítica
-- `routes/tablero_routes.py` expone JSON para gráficos de palabras frecuentes, top números, volumen por día/hora y desglose por tipo o rol. Esto permite construir widgets en `tablero.html`. 
-- `routes/export_routes.py` agrega la información relevante de una conversación (mensajes, últimos pasos, etc.) y la serializa a JSON/CSV bajo demanda. 
+- `routes/tablero_routes.py` expone JSON para gráficos de palabras frecuentes, top números, volumen por día/hora y desglose por tipo o rol. Esto permite construir widgets en `tablero.html`.
+- `routes/export_routes.py` agrega la información relevante de una conversación (mensajes, últimos pasos, etc.) y la serializa a JSON/CSV bajo demanda.
 
 ## Scripts y mantenimiento
 - `scripts/rehash_passwords.py` ayuda a migrar contraseñas antiguas (SHA-256 plano) a hashes modernos. Ejecuta el script en un entorno controlado, solicitando la contraseña actual de cada usuario. 
