@@ -57,6 +57,7 @@ class CatalogResponder:
         self._redis = self._init_redis()
         self._cache_ttl = Config.AI_CACHE_TTL
         self._last_mtime: float = 0.0
+        self._tesseract_ready: Optional[bool] = None
 
     @classmethod
     def instance(cls) -> "CatalogResponder":
@@ -99,6 +100,29 @@ class CatalogResponder:
             with open(self._metadata_path, "r", encoding="utf-8") as fh:
                 self._metadata = json.load(fh)
             self._last_mtime = mtime
+
+    def _ensure_tesseract_available(self) -> bool:
+        if self._tesseract_ready is not None:
+            return self._tesseract_ready
+
+        if pytesseract is None:
+            self._tesseract_ready = False
+            return False
+
+        try:
+            pytesseract.get_tesseract_version()
+        except Exception as exc:
+            tesseract_mod = getattr(pytesseract, "pytesseract", None)
+            not_found_exc = getattr(tesseract_mod, "TesseractNotFoundError", None) if tesseract_mod else None
+            if not_found_exc is not None and isinstance(exc, not_found_exc):
+                logging.warning("Tesseract no está instalado en el sistema.")
+            else:
+                logging.warning("No se pudo comprobar la instalación de Tesseract", exc_info=True)
+            self._tesseract_ready = False
+            return False
+
+        self._tesseract_ready = True
+        return True
 
     @staticmethod
     def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 200) -> List[str]:
@@ -147,6 +171,60 @@ class CatalogResponder:
         pages = max((int(m.get("page") or 0) for m in metadata), default=0)
         return {"chunks": len(metadata), "sources": sources, "pages": pages}
 
+    def _extract_text_via_pdfium(
+        self, pdf_path: str, page_number: int, pdfium_context: Dict[str, object]
+    ) -> str:
+        """Intenta una extracción directa de texto usando pypdfium2 antes de recurrir a OCR."""
+
+        if pdfium is None:
+            pdfium_context.setdefault("error", "missing_libs")
+            return ""
+
+        if pdfium_context.get("error") in {"init_failed", "page_failed", "text_failed"}:
+            return ""
+
+        if pdfium_context.get("doc") is None:
+            try:
+                pdfium_context["doc"] = pdfium.PdfDocument(pdf_path)
+            except Exception:
+                logging.warning(
+                    "No se pudo abrir el PDF con pypdfium2 para extracción de texto", exc_info=True
+                )
+                pdfium_context["error"] = "init_failed"
+                return ""
+
+        doc = pdfium_context.get("doc")
+        try:
+            page = doc[page_number - 1]
+        except Exception:
+            logging.warning(
+                "No se pudo acceder a la página %s con pypdfium2", page_number, exc_info=True
+            )
+            pdfium_context["error"] = "page_failed"
+            return ""
+
+        textpage = None
+        text = ""
+        try:
+            textpage = page.get_textpage()
+            text = textpage.get_text_bounded() or ""
+        except Exception:
+            logging.warning(
+                "Falló la extracción de texto vía pypdfium2 en la página %s", page_number, exc_info=True
+            )
+            pdfium_context["error"] = "text_failed"
+        finally:
+            if textpage is not None:
+                try:
+                    textpage.close()
+                except Exception:
+                    pass
+            page.close()
+
+        if text.strip():
+            pdfium_context.pop("error", None)
+        return text
+
     def _extract_text_via_ocr(
         self, pdf_path: str, page_number: int, ocr_context: Dict[str, object]
     ) -> str:
@@ -154,8 +232,15 @@ class CatalogResponder:
 
         if not Config.AI_OCR_ENABLED:
             return ""
-        if pytesseract is None or pdfium is None:
+        if pdfium is None:
             ocr_context.setdefault("error", "missing_libs")
+            return ""
+        if pytesseract is None:
+            ocr_context.setdefault("error", "missing_libs")
+            return ""
+
+        if not self._ensure_tesseract_available():
+            ocr_context.setdefault("error", "tesseract_missing")
             return ""
 
         if ocr_context.get("error") in {"tesseract_missing", "init_failed"}:
@@ -209,6 +294,7 @@ class CatalogResponder:
             if tesseract_mod and isinstance(exc, getattr(tesseract_mod, "TesseractNotFoundError", Exception)):
                 logging.warning("Tesseract no está instalado en el sistema.")
                 ocr_context["error"] = "tesseract_missing"
+                self._tesseract_ready = False
                 return ""
 
             if (
@@ -251,6 +337,7 @@ class CatalogResponder:
         reader = PdfReader(pdf_path)
         metadata: List[Dict[str, object]] = []
         chunks: List[str] = []
+        pdfium_text_context: Dict[str, object] = {"doc": None}
         ocr_context: Dict[str, object] = {"doc": None}
         try:
             for page_number, page in enumerate(reader.pages, start=1):
@@ -260,8 +347,12 @@ class CatalogResponder:
                     logging.warning("No se pudo extraer texto de la página %s", page_number, exc_info=True)
                     page_text = ""
                 if not page_text.strip():
-                    ocr_text = self._extract_text_via_ocr(pdf_path, page_number, ocr_context)
-                    page_text = ocr_text or ""
+                    pdfium_text = self._extract_text_via_pdfium(pdf_path, page_number, pdfium_text_context)
+                    if pdfium_text.strip():
+                        page_text = pdfium_text
+                    else:
+                        ocr_text = self._extract_text_via_ocr(pdf_path, page_number, ocr_context)
+                        page_text = ocr_text or ""
                 for chunk_idx, chunk in enumerate(self._chunk_text(page_text), start=1):
                     if not chunk.strip():
                         continue
@@ -276,15 +367,17 @@ class CatalogResponder:
                     )
                     chunks.append(chunk)
         finally:
-            doc = ocr_context.get("doc")
-            if doc is not None:
-                try:
-                    doc.close()
-                except Exception:
-                    pass
+            for ctx in (pdfium_text_context, ocr_context):
+                doc = ctx.get("doc")
+                if doc is not None:
+                    try:
+                        doc.close()
+                    except Exception:
+                        pass
 
         if not chunks:
             error_reason = ocr_context.get("error")
+            pdfium_error = pdfium_text_context.get("error")
             if error_reason == "missing_libs":
                 raise ValueError(
                     "El PDF no contiene texto utilizable y faltan dependencias de OCR (pypdfium2/pytesseract)."
@@ -297,31 +390,16 @@ class CatalogResponder:
                 raise ValueError(
                     "No se pudo extraer texto del PDF ni con OCR, revisa la calidad del archivo."
                 )
+            if pdfium_error == "missing_libs" and Config.AI_OCR_ENABLED:
+                raise ValueError(
+                    "El PDF no contiene texto utilizable y pypdfium2 no está instalado para intentar una extracción avanzada."
+                )
+            if pdfium_error in {"init_failed", "page_failed", "text_failed"}:
+                logging.warning("No se pudo extraer texto usando pypdfium2; se continuará con el mensaje genérico.")
             if Config.AI_OCR_ENABLED:
                 raise ValueError(
                     "El PDF no contiene texto utilizable incluso con OCR."
                 )
-=======
-        for page_number, page in enumerate(reader.pages, start=1):
-            try:
-                page_text = page.extract_text() or ""
-            except Exception:
-                logging.warning("No se pudo extraer texto de la página %s", page_number, exc_info=True)
-                page_text = ""
-            for chunk_idx, chunk in enumerate(self._chunk_text(page_text), start=1):
-                if not chunk.strip():
-                    continue
-                metadata.append(
-                    {
-                        "page": page_number,
-                        "chunk": chunk_idx,
-                        "text": chunk,
-                        "source": source_name or os.path.basename(pdf_path),
-                        "skus": self._extract_skus(chunk),
-                    }
-                )
-                chunks.append(chunk)
-        if not chunks:
             raise ValueError("El PDF no contiene texto utilizable.")
 
         embeddings: List[List[float]] = []
