@@ -152,11 +152,54 @@ gunicorn -w 2 -b 0.0.0.0:5000 app:app
 ```
 
 ## Ejecución con Docker
-El proyecto incluye un `docker-compose.yml` mínimo que monta el código y ejecuta Gunicorn si está instalado. 
+El proyecto incluye un `docker-compose.yml` mínimo que monta el código y ejecuta Gunicorn si está instalado.
 ```bash
 docker compose up --build
 ```
 Recuerda proporcionar un `.env` con todas las variables y exponer MySQL (por ejemplo, mediante otro servicio en el mismo `docker-compose.yml`).
+
+## Integración con la API de ChatGPT, embeddings y OCR
+
+El modo conversacional con IA permite que un asesor automático responda preguntas usando un catálogo PDF vectorizado. La integración se basa en la API de OpenAI (ChatGPT), un motor de embeddings, OCR híbrido y un worker en segundo plano que detecta cuando una conversación debe pasar del flujo tradicional a la IA.
+
+### Flujo general
+1. **Ingesta del catálogo**: desde la vista de configuración (`/configuracion/ia`) un administrador puede subir un PDF que será procesado por `CatalogResponder.ingest_pdf`. Se extrae texto por página con tres estrategias en cascada: `PdfReader` (texto embebido), `pypdfium2` (texto avanzado) y OCR (`pytesseract` y/o `easyocr`) según lo permita la configuración. Cada página se divide en fragmentos solapados, se calculan SKU, se generan miniaturas y se almacena la metadata necesaria para referencias posteriores.【F:services/ai_responder.py†L107-L364】【F:routes/configuracion.py†L352-L416】
+2. **Creación del índice vectorial**: los fragmentos se envían al endpoint de embeddings de OpenAI (`client.embeddings.create`), se guardan en un índice FAISS (`IndexFlatL2`) y se persiste la metadata asociada en un `.json`. También se registran estadísticas y la fecha de actualización en MySQL (`ia_settings`).【F:services/ai_responder.py†L370-L421】【F:services/db.py†L581-L760】
+3. **Handoff desde el flujo de reglas**: cuando un chat alcanza el paso configurado en `AI_HANDOFF_STEP`, el webhook marca el estado como `ia_pendiente` y el mensaje se queda esperando a que el worker lo tome. Este paso se define en `.env` y, por defecto, equivale al paso `ia_chat` del flujo conversacional.【F:routes/webhook.py†L321-L360】【F:config.py†L35-L48】
+4. **Worker de IA**: `AIWorker` (hilo daemon inicializado en `app.py`) consulta periódicamente los mensajes nuevos asociados al `handoff_step`. Utiliza `get_messages_for_ai` y `claim_ai_message` para procesar cada conversación de manera segura, llama a `CatalogResponder.answer` y envía la respuesta por WhatsApp. También comparte hasta tres imágenes de referencia y aplica un mensaje de fallback si el modelo no devuelve texto.【F:app.py†L13-L51】【F:services/ai_worker.py†L1-L141】【F:services/db.py†L642-L760】
+5. **Respuesta de ChatGPT**: al responder, se calculan embeddings de la pregunta, se consultan los `top_k` fragmentos más similares en FAISS y se construye un prompt con instrucciones de uso exclusivo del catálogo. La generación se realiza vía `client.responses.create` con el modelo configurado en `AI_GEN_MODEL`. El texto se post-procesa para respetar límites de oraciones/caracteres y se registran referencias, métricas y bitácoras en `ia_logs`. El resultado se cachea opcionalmente en Redis para preguntas repetidas.【F:services/ai_responder.py†L423-L583】
+
+### Variables de entorno relevantes
+
+| Variable | Propósito |
+|----------|-----------|
+| `OPENAI_API_KEY` | Clave necesaria para consumir embeddings y respuestas de OpenAI. Sin ella se bloquea la ingesta de catálogos y el modo IA. |
+| `AI_EMBED_MODEL` | Modelo de embeddings (por defecto `text-embedding-3-small`). Debe ser compatible con el endpoint `/embeddings`. |
+| `AI_GEN_MODEL` | Modelo generativo usado por `responses.create` (por defecto `gpt-4o-mini`). |
+| `AI_MODE_ENABLED` | Valor inicial por defecto para el interruptor del modo IA; se guarda en `ia_settings.enabled`. |
+| `AI_HANDOFF_STEP` | Paso del flujo en el que una conversación se envía al worker de IA (por defecto `ia_chat`). |
+| `AI_VECTOR_STORE_PATH` | Ruta base donde se guardan el índice FAISS (`.faiss`) y la metadata (`.json`). |
+| `AI_CACHE_TTL` | TTL en segundos para cachear respuestas en Redis; requiere `REDIS_URL`. |
+| `AI_MAX_OUTPUT_TOKENS`, `AI_RESPONSE_MAX_SENTENCES`, `AI_RESPONSE_MAX_CHARS` | Límites de longitud aplicados al texto generado antes de enviarlo a WhatsApp. |
+| `AI_FALLBACK_MESSAGE` | Mensaje alterno que se envía cuando la IA no produce respuesta. |
+| `AI_POLL_INTERVAL`, `AI_BATCH_SIZE` | Controlan la frecuencia y el tamaño de lote con el que `AIWorker` consulta mensajes pendientes. |
+| `AI_OCR_*` | Agrupan las opciones para Tesseract/EasyOCR (activación, idiomas, DPI, escala, calidad, etc.). Permiten ajustar qué motor OCR se usa y cómo se generan las miniaturas de página. |
+| `AI_PAGE_IMAGE_*` | Directorio y parámetros para renderizar imágenes de página que se envían como referencia visual al cliente. |
+
+### Pipeline de OCR y miniaturas
+- **Tesseract (`pytesseract`)**: se verifica que esté instalado y que existan los idiomas declarados. Si falta, el sistema registra una advertencia y usa EasyOCR como respaldo si está permitido.【F:services/ai_responder.py†L126-L224】
+- **EasyOCR**: se instancia bajo demanda, sin GPU y con control sobre la descarga de modelos (`AI_OCR_EASYOCR_DOWNLOAD_ENABLED`). Si ninguno de los motores está disponible y el PDF carece de texto embebido, la ingesta se aborta con un mensaje descriptivo.【F:services/ai_responder.py†L226-L362】
+- **Rasterizado de páginas**: `pypdfium2` renderiza cada página, opcionalmente cambiando escala, formato y calidad. Las imágenes resultantes se guardan en `AI_PAGE_IMAGE_DIR/<hash>/page_XXXX.jpg` y se exponen a través de `/static` o de `MEDIA_PUBLIC_BASE_URL` para ser enviadas por WhatsApp como evidencia del catálogo.【F:services/ai_responder.py†L246-L360】
+
+### Persistencia y bitácoras
+- La tabla `ia_settings` almacena el estado global (habilitado, puntero `last_processed_message_id`, estadísticas y rutas de catálogo). Se mantiene actualizada al ingerir catálogos, al activar/desactivar la IA y al reclamar mensajes desde el worker.【F:services/db.py†L581-L760】
+- Las interacciones exitosas se registran en `ia_logs`, guardando la pregunta, la respuesta y la metadata (fragmentos usados, si vino de caché, etc.). Esto permite auditorías y métricas futuras.【F:services/ai_responder.py†L566-L583】【F:services/db.py†L779-L815】
+- `reset_ai_conversations` reubica a los usuarios que se encontraban en el `handoff_step` cuando la IA se desactiva, devolviéndolos al `INITIAL_STEP` para que sigan en el flujo tradicional.【F:routes/configuracion.py†L352-L416】【F:services/db.py†L762-L778】
+
+### Recomendaciones operativas
+- Antes de activar la IA, ejecuta la ingesta del catálogo y verifica que `summary` muestre el número esperado de fragmentos y páginas en la vista de configuración. Asegúrate de que el `handoff_step` exista en tu flujo de reglas para evitar bloqueos.
+- Si usas Docker, confirma que la imagen incluya `faiss`, `pypdfium2`, `tesseract-ocr`, modelos de idioma necesarios y los binarios de `poppler`/`ghostscript` según tu SO. Estas dependencias son imprescindibles para extraer texto e imágenes.
+- Para aprovechar la caché de respuestas, configura `REDIS_URL`. Si Redis no está disponible, el sistema continúa funcionando sin cachear pero muestra advertencias en los logs.【F:services/ai_responder.py†L85-L124】
 
 ## Panel web y herramientas
 - **/login**: acceso de usuarios internos (hashes PBKDF2 y compatibilidad con SHA-256 legacy). 
