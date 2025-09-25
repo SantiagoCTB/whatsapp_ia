@@ -4,7 +4,7 @@ import time
 from typing import Dict, List, Optional, Set
 
 from config import Config
-from services.ai_responder import get_catalog_responder
+from services.ai_responder import SKU_PATTERN, get_catalog_responder
 from services.db import (
     claim_ai_message,
     get_ai_settings,
@@ -72,7 +72,7 @@ class AIWorker(threading.Thread):
                         )
                         if enviado:
                             try:
-                                self._send_reference_images(numero, references)
+                                self._send_reference_images(numero, answer, references)
                             except Exception:
                                 logging.warning(
                                     "No se pudieron enviar las imágenes de referencia para %s",
@@ -92,7 +92,7 @@ class AIWorker(threading.Thread):
                             )
                             if enviado:
                                 try:
-                                    self._send_reference_images(numero, references)
+                                    self._send_reference_images(numero, fallback, references)
                                 except Exception:
                                     logging.warning(
                                         "No se pudieron enviar las imágenes de referencia para %s",
@@ -104,14 +104,47 @@ class AIWorker(threading.Thread):
                 logging.exception("Fallo general en el worker de IA")
             time.sleep(poll_seconds)
 
-    def _send_reference_images(self, numero: str, references: List[Dict[str, object]]) -> None:
-        if not references:
+    def _send_reference_images(
+        self,
+        numero: str,
+        answer_text: Optional[str],
+        references: List[Dict[str, object]],
+    ) -> None:
+        if not references or not answer_text:
             return
 
         seen: Set[str] = set()
         max_images = 3
-        sent = 0
+        skus_in_answer = {
+            sku.strip().upper()
+            for sku in SKU_PATTERN.findall(answer_text or "")
+            if sku.strip()
+        }
+        if not skus_in_answer:
+            return
+
+        filtered_refs: List[Dict[str, object]] = []
         for ref in references:
+            if not isinstance(ref, dict):
+                continue
+            ref_skus_raw = ref.get("skus")
+            if not isinstance(ref_skus_raw, (list, tuple, set)):
+                continue
+            ref_skus = {
+                str(sku).strip().upper()
+                for sku in ref_skus_raw
+                if isinstance(sku, str) and sku.strip()
+            }
+            if not ref_skus:
+                continue
+            if ref_skus & skus_in_answer:
+                filtered_refs.append(ref)
+
+        if not filtered_refs:
+            return
+
+        sent = 0
+        for ref in filtered_refs:
             if not isinstance(ref, dict):
                 continue
             image_url = ref.get("image_url")
