@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from config import Config
 from services.ai_responder import get_catalog_responder
@@ -12,6 +12,7 @@ from services.db import (
     update_chat_state,
 )
 from services.whatsapp_api import enviar_mensaje
+from services.normalize_text import normalize_text
 
 
 _worker: Optional["AIWorker"] = None
@@ -72,7 +73,7 @@ class AIWorker(threading.Thread):
                         )
                         if enviado:
                             try:
-                                self._send_reference_images(numero, references)
+                                self._send_reference_images(numero, answer, references)
                             except Exception:
                                 logging.warning(
                                     "No se pudieron enviar las imágenes de referencia para %s",
@@ -92,7 +93,7 @@ class AIWorker(threading.Thread):
                             )
                             if enviado:
                                 try:
-                                    self._send_reference_images(numero, references)
+                                    self._send_reference_images(numero, fallback, references)
                                 except Exception:
                                     logging.warning(
                                         "No se pudieron enviar las imágenes de referencia para %s",
@@ -104,16 +105,55 @@ class AIWorker(threading.Thread):
                 logging.exception("Fallo general en el worker de IA")
             time.sleep(poll_seconds)
 
-    def _send_reference_images(self, numero: str, references: List[Dict[str, object]]) -> None:
-        if not references:
+    def _send_reference_images(
+        self,
+        numero: str,
+        answer_text: Optional[str],
+        references: List[Dict[str, object]],
+    ) -> None:
+        if not references or not answer_text:
             return
+
+        normalized_answer = normalize_text(answer_text)
+        if not normalized_answer:
+            return
+
+        answer_tokens = set(normalized_answer.split())
+        if not answer_tokens:
+            return
+
+        ranked: List[Tuple[int, float, Dict[str, object]]] = []
+        for ref in references:
+            if not isinstance(ref, dict):
+                continue
+            score_value = float(ref.get("score") or 0.0)
+
+            match_points = 0
+            for sku in ref.get("skus") or []:
+                normalized_sku = normalize_text(str(sku))
+                if normalized_sku and normalized_sku in answer_tokens:
+                    match_points += 5
+
+            ref_text_tokens = set()
+            normalized_ref_text = normalize_text(ref.get("text") or "")
+            if normalized_ref_text:
+                ref_text_tokens = set(normalized_ref_text.split())
+                match_points += len(ref_text_tokens & answer_tokens)
+
+            if match_points <= 0:
+                continue
+
+            ranked.append((match_points, score_value, ref))
+
+        if not ranked:
+            return
+
+        ranked.sort(key=lambda item: (-item[0], item[1]))
 
         seen: Set[str] = set()
         max_images = 3
         sent = 0
-        for ref in references:
-            if not isinstance(ref, dict):
-                continue
+        for _, _, ref in ranked:
             image_url = ref.get("image_url")
             if not image_url or image_url in seen:
                 continue
