@@ -794,7 +794,7 @@ class CatalogResponder:
                         "role": "system",
                         "content": [
                             {
-                                "type": "text",
+                                "type": "input_text",
                                 "text": (
                                     "Eres un asistente experto en productos. Utiliza solo la información suministrada en el contexto."
                                     " Indica SKU y página cuando sea posible."
@@ -802,7 +802,12 @@ class CatalogResponder:
                             }
                         ],
                     },
-                    {"role": "user", "content": [{"type": "text", "text": prompt}]},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": prompt},
+                        ],
+                    },
                 ],
                 temperature=0.2,
             )
