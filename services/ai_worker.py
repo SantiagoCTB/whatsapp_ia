@@ -68,7 +68,9 @@ class AIWorker(threading.Thread):
                                 self._send_reference_images(numero, references)
                             except Exception:
                                 logging.warning(
-                                    "No se pudieron enviar las imágenes de referencia para %s", numero, exc_info=True
+                                    "No se pudieron enviar las imágenes de referencia para %s",
+                                    numero,
+                                    exc_info=True,
                                 )
                         update_chat_state(numero, Config.AI_HANDOFF_STEP, "ia_activa")
                     else:
@@ -86,7 +88,9 @@ class AIWorker(threading.Thread):
                                     self._send_reference_images(numero, references)
                                 except Exception:
                                     logging.warning(
-                                        "No se pudieron enviar las imágenes de referencia para %s", numero, exc_info=True
+                                        "No se pudieron enviar las imágenes de referencia para %s",
+                                        numero,
+                                        exc_info=True,
                                     )
                             update_chat_state(numero, Config.AI_HANDOFF_STEP, "ia_fallback")
                     update_ai_last_processed(message_id)
