@@ -45,6 +45,9 @@ class Config:
         'AI_FALLBACK_MESSAGE',
         'Por ahora no tengo información del catálogo, intentaré más tarde.'
     )
+    AI_MAX_OUTPUT_TOKENS = int(os.getenv('AI_MAX_OUTPUT_TOKENS', 200))
+    AI_RESPONSE_MAX_SENTENCES = int(os.getenv('AI_RESPONSE_MAX_SENTENCES', 3))
+    AI_RESPONSE_MAX_CHARS = int(os.getenv('AI_RESPONSE_MAX_CHARS', 480))
     AI_OCR_ENABLED = _env_bool('AI_OCR_ENABLED', True)
     AI_OCR_DPI = int(os.getenv('AI_OCR_DPI', 220))
     AI_OCR_LANG = os.getenv('AI_OCR_LANG', 'spa+eng')

@@ -780,6 +780,8 @@ class CatalogResponder:
         return (
             "Actúas como asesor comercial. Usa únicamente el catálogo proporcionado para responder.\n"
             "Entrega la respuesta en español neutro, proponiendo opciones con SKU y una breve invitación a continuar la compra.\n"
+            "Responde en un único mensaje con frases muy concretas (máximo "
+            f"{max(Config.AI_RESPONSE_MAX_SENTENCES, 1)} oraciones cortas). Evita listas extensas y despedidas largas.\n"
             "Si el dato no aparece, informa que no está en el catálogo.\n\n"
             f"Pregunta del cliente: {question}\n\n"
             f"Catálogo disponible:\n{context}"
@@ -810,12 +812,38 @@ class CatalogResponder:
                     },
                 ],
                 temperature=0.2,
+                max_output_tokens=max(Config.AI_MAX_OUTPUT_TOKENS, 1),
             )
             text = (response.output_text or "").strip()
-            return text or None
+            cleaned = self._post_process_answer(text)
+            return cleaned or None
         except Exception:
             logging.exception("Fallo al generar respuesta con OpenAI")
             return None
+
+    def _post_process_answer(self, text: str) -> Optional[str]:
+        """Ajusta la respuesta para que sea breve y en un solo mensaje."""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return None
+
+        sentences = [
+            segment.strip()
+            for segment in re.split(r"(?<=[.!?])\s+", cleaned)
+            if segment.strip()
+        ]
+        max_sentences = max(getattr(Config, "AI_RESPONSE_MAX_SENTENCES", 1), 1)
+        if sentences:
+            cleaned = " ".join(sentences[:max_sentences])
+
+        max_chars = max(getattr(Config, "AI_RESPONSE_MAX_CHARS", 0), 0)
+        if max_chars and len(cleaned) > max_chars:
+            truncated = cleaned[:max_chars]
+            if " " in truncated:
+                truncated = truncated.rsplit(" ", 1)[0]
+            cleaned = truncated.rstrip(",;:-") + "…"
+
+        return cleaned
 
 
 def get_catalog_responder() -> CatalogResponder:
