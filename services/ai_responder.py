@@ -858,7 +858,7 @@ class CatalogResponder:
                 if self._redis:
                     self._redis.delete(self._cache_key(normalized_question))
             else:
-                log_ai_interaction(
+                self._log_interaction(
                     numero,
                     normalized_question,
                     answer,
@@ -891,7 +891,7 @@ class CatalogResponder:
                     self._redis.setex(self._cache_key(normalized_question), self._cache_ttl, payload)
                 except Exception:
                     logging.warning("No se pudo almacenar la respuesta en Redis", exc_info=True)
-            log_ai_interaction(numero, normalized_question, answer, metadata_log)
+            self._log_interaction(numero, normalized_question, answer, metadata_log)
         return answer, references
 
     # --- helpers de generación -----------------------------------------------
@@ -978,6 +978,23 @@ class CatalogResponder:
 
         return cleaned
 
+
+    def _log_interaction(
+        self,
+        numero: str,
+        pregunta: str,
+        respuesta: Optional[str],
+        metadata: Optional[Dict[str, object]] = None,
+    ) -> None:
+        """Registra la interacción sin interrumpir el flujo si la BD falla."""
+
+        if not respuesta:
+            return
+
+        try:
+            log_ai_interaction(numero, pregunta, respuesta, metadata)
+        except Exception:
+            logging.warning("No se pudo registrar la interacción de IA", exc_info=True)
 
 def get_catalog_responder() -> CatalogResponder:
     """Shortcut para acceder al singleton."""

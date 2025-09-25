@@ -64,7 +64,14 @@ class AIWorker(threading.Thread):
                             step=Config.AI_HANDOFF_STEP,
                         )
                         if enviado:
-                            self._send_reference_images(numero, references)
+                            try:
+                                self._send_reference_images(numero, references)
+                            except Exception:
+                                logging.warning(
+                                    "No se pudieron enviar las imágenes de referencia para %s",
+                                    numero,
+                                    exc_info=True,
+                                )
                         update_chat_state(numero, Config.AI_HANDOFF_STEP, "ia_activa")
                     else:
                         fallback = (Config.AI_FALLBACK_MESSAGE or "").strip()
@@ -77,7 +84,14 @@ class AIWorker(threading.Thread):
                                 step=Config.AI_HANDOFF_STEP,
                             )
                             if enviado:
-                                self._send_reference_images(numero, references)
+                                try:
+                                    self._send_reference_images(numero, references)
+                                except Exception:
+                                    logging.warning(
+                                        "No se pudieron enviar las imágenes de referencia para %s",
+                                        numero,
+                                        exc_info=True,
+                                    )
                             update_chat_state(numero, Config.AI_HANDOFF_STEP, "ia_fallback")
                     update_ai_last_processed(message_id)
             except Exception:
