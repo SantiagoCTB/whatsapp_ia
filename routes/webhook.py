@@ -108,6 +108,7 @@ def dispatch_rule(numero, regla, step=None):
     current_step_lower = (current_step or '').strip().lower()
     ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
     is_ai_handoff_step = bool(ai_step) and current_step_lower == ai_step
+    ai_enabled = is_ai_enabled() if is_ai_handoff_step else False
     media_list = media_urls.split('||') if media_urls else []
     if tipo_resp in ['image', 'video', 'audio', 'document'] and media_list:
         enviar_mensaje(
@@ -129,14 +130,25 @@ def dispatch_rule(numero, regla, step=None):
                     regla_id=regla_id,
                 )
     else:
-        enviar_mensaje(
-            numero,
-            resp,
-            tipo_respuesta=tipo_resp,
-            opciones=opts,
-            step=current_step,
-            regla_id=regla_id,
+        should_skip = (
+            is_ai_handoff_step
+            and ai_enabled
+            and tipo_resp == 'texto'
+            and not (resp or '').strip()
         )
+        if is_ai_handoff_step and tipo_resp == 'texto' and not (resp or '').strip() and not ai_enabled:
+            fallback = (Config.AI_FALLBACK_MESSAGE or '').strip() or DEFAULT_FALLBACK_TEXT
+            resp = fallback
+            should_skip = not bool(resp)
+        if not should_skip:
+            enviar_mensaje(
+                numero,
+                resp,
+                tipo_respuesta=tipo_resp,
+                opciones=opts,
+                step=current_step,
+                regla_id=regla_id,
+            )
     if rol_kw:
         conn = get_connection(); c = conn.cursor()
         c.execute("SELECT id FROM roles WHERE keyword=%s", (rol_kw,))

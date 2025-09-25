@@ -343,7 +343,12 @@ def _reglas_view(template_name):
                 except Exception:
                     pass
             reglas.append(d)
-        return render_template(template_name, reglas=reglas)
+        ai_handoff_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
+        return render_template(
+            template_name,
+            reglas=reglas,
+            ai_handoff_step=ai_handoff_step,
+        )
     finally:
         conn.close()
 
