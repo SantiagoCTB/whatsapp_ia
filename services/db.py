@@ -643,20 +643,24 @@ def update_ai_last_processed(message_id):
     conn = get_connection()
     c    = conn.cursor()
     c.execute(
-        "UPDATE ia_settings SET last_processed_message_id=%s, updated_at=NOW() WHERE id=1",
-        (int(message_id),),
+        """
+        INSERT INTO ia_settings (
+            id,
+            enabled,
+            last_processed_message_id,
+            vector_store_path,
+            catalog_updated_at,
+            catalog_stats,
+            updated_at
+        )
+        VALUES (1, %s, %s, %s, NULL, NULL, NOW())
+        ON DUPLICATE KEY UPDATE
+            last_processed_message_id = VALUES(last_processed_message_id),
+            vector_store_path = VALUES(vector_store_path),
+            updated_at = NOW()
+        """,
+        (1 if Config.AI_MODE_DEFAULT else 0, int(message_id), Config.AI_VECTOR_STORE_PATH),
     )
-    if c.rowcount == 0:
-        c.execute("SELECT 1 FROM ia_settings WHERE id=1 LIMIT 1")
-        exists = c.fetchone()
-        if not exists:
-            c.execute(
-                """
-                INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
-                VALUES (1, %s, %s, %s, NULL, NULL, NOW())
-                """,
-                (1 if Config.AI_MODE_DEFAULT else 0, int(message_id), Config.AI_VECTOR_STORE_PATH),
-            )
     conn.commit()
     conn.close()
 
@@ -667,20 +671,24 @@ def set_ai_last_processed_to_latest():
     c.execute("SELECT IFNULL(MAX(id), 0) FROM mensajes")
     last = c.fetchone()[0] or 0
     c.execute(
-        "UPDATE ia_settings SET last_processed_message_id=%s, updated_at=NOW() WHERE id=1",
-        (last,),
+        """
+        INSERT INTO ia_settings (
+            id,
+            enabled,
+            last_processed_message_id,
+            vector_store_path,
+            catalog_updated_at,
+            catalog_stats,
+            updated_at
+        )
+        VALUES (1, %s, %s, %s, NULL, NULL, NOW())
+        ON DUPLICATE KEY UPDATE
+            last_processed_message_id = VALUES(last_processed_message_id),
+            vector_store_path = VALUES(vector_store_path),
+            updated_at = NOW()
+        """,
+        (1 if Config.AI_MODE_DEFAULT else 0, last, Config.AI_VECTOR_STORE_PATH),
     )
-    if c.rowcount == 0:
-        c.execute("SELECT 1 FROM ia_settings WHERE id=1 LIMIT 1")
-        exists = c.fetchone()
-        if not exists:
-            c.execute(
-                """
-                INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
-                VALUES (1, %s, %s, %s, NULL, NULL, NOW())
-                """,
-                (1 if Config.AI_MODE_DEFAULT else 0, last, Config.AI_VECTOR_STORE_PATH),
-            )
     conn.commit()
     conn.close()
     return last
@@ -691,20 +699,25 @@ def update_ai_catalog_metadata(stats):
     conn = get_connection()
     c    = conn.cursor()
     c.execute(
-        "UPDATE ia_settings SET catalog_updated_at=NOW(), catalog_stats=%s, vector_store_path=%s, updated_at=NOW() WHERE id=1",
-        (payload, Config.AI_VECTOR_STORE_PATH),
+        """
+        INSERT INTO ia_settings (
+            id,
+            enabled,
+            last_processed_message_id,
+            vector_store_path,
+            catalog_updated_at,
+            catalog_stats,
+            updated_at
+        )
+        VALUES (1, %s, 0, %s, NOW(), %s, NOW())
+        ON DUPLICATE KEY UPDATE
+            catalog_updated_at = NOW(),
+            catalog_stats = VALUES(catalog_stats),
+            vector_store_path = VALUES(vector_store_path),
+            updated_at = NOW()
+        """,
+        (1 if Config.AI_MODE_DEFAULT else 0, Config.AI_VECTOR_STORE_PATH, payload),
     )
-    if c.rowcount == 0:
-        c.execute("SELECT 1 FROM ia_settings WHERE id=1 LIMIT 1")
-        exists = c.fetchone()
-        if not exists:
-            c.execute(
-                """
-                INSERT INTO ia_settings (id, enabled, last_processed_message_id, vector_store_path, catalog_updated_at, catalog_stats, updated_at)
-                VALUES (1, %s, 0, %s, NOW(), %s, NOW())
-                """,
-                (1 if Config.AI_MODE_DEFAULT else 0, Config.AI_VECTOR_STORE_PATH, payload),
-            )
     conn.commit()
     conn.close()
 
