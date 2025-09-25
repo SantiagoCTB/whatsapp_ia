@@ -24,7 +24,10 @@
     <input type="text" id="input_text" name="input_text" placeholder="palabra1, palabra2" required>
 
     <label for="respuesta">Respuesta del bot:</label>
-    <textarea id="respuesta" name="respuesta" rows="4" required></textarea>
+    <textarea id="respuesta" name="respuesta" rows="4" required data-default-placeholder=""></textarea>
+    <small id="respuestaHint" style="display:none;" class="form-hint">
+        Si dejas este campo vacío en el paso de traspaso a la IA, el bot no enviará mensaje y la respuesta llegará directamente desde la IA.
+    </small>
 
     <label for="siguiente_step">Siguiente paso (puedes ingresar varios pasos separados por comas):</label>
     <input type="text" id="siguiente_step" name="siguiente_step" placeholder="paso1, paso2">
@@ -200,10 +203,39 @@ document.getElementById('tipo').addEventListener('change', () => {
 });
 const form = document.getElementById('reglaForm');
 form.addEventListener('submit', prepareOptions);
+const aiHandoffStep = '{{ ai_handoff_step or "" }}';
+let respuestaDefaultPlaceholder = '';
+
+function updateRespuestaRequirement() {
+    const stepInput = document.getElementById('step');
+    const respuestaField = document.getElementById('respuesta');
+    const hint = document.getElementById('respuestaHint');
+    if (!respuestaDefaultPlaceholder) {
+        respuestaDefaultPlaceholder = respuestaField.getAttribute('data-default-placeholder') || respuestaField.getAttribute('placeholder') || '';
+    }
+    const stepValue = (stepInput.value || '').trim().toLowerCase();
+    const isAiStep = aiHandoffStep && stepValue === aiHandoffStep;
+    respuestaField.required = !isAiStep;
+    if (isAiStep) {
+        respuestaField.placeholder = 'La IA responderá automáticamente por API.';
+        if (hint) {
+            hint.style.display = 'block';
+        }
+    } else {
+        respuestaField.placeholder = respuestaDefaultPlaceholder;
+        if (hint) {
+            hint.style.display = 'none';
+        }
+    }
+}
+
+document.getElementById('step').addEventListener('input', updateRespuestaRequirement);
+
 window.addEventListener('DOMContentLoaded', () => {
     toggleMediaFields();
     toggleListFields();
     toggleButtonFields();
+    updateRespuestaRequirement();
 });
 
 function cargarRegla(regla) {
@@ -244,6 +276,7 @@ function cargarRegla(regla) {
     toggleMediaFields();
     toggleListFields();
     toggleButtonFields();
+    updateRespuestaRequirement();
 }
 </script>
 {% endblock %}

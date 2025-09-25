@@ -129,14 +129,20 @@ def dispatch_rule(numero, regla, step=None):
                     regla_id=regla_id,
                 )
     else:
-        enviar_mensaje(
-            numero,
-            resp,
-            tipo_respuesta=tipo_resp,
-            opciones=opts,
-            step=current_step,
-            regla_id=regla_id,
+        should_skip = (
+            is_ai_handoff_step
+            and tipo_resp == 'texto'
+            and not (resp or '').strip()
         )
+        if not should_skip:
+            enviar_mensaje(
+                numero,
+                resp,
+                tipo_respuesta=tipo_resp,
+                opciones=opts,
+                step=current_step,
+                regla_id=regla_id,
+            )
     if rol_kw:
         conn = get_connection(); c = conn.cursor()
         c.execute("SELECT id FROM roles WHERE keyword=%s", (rol_kw,))
