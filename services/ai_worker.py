@@ -7,6 +7,7 @@ from config import Config
 from services.ai_responder import get_catalog_responder
 from services.db import (
     claim_ai_message,
+    get_catalog_media_keywords,
     get_ai_settings,
     get_messages_for_ai,
     update_chat_state,
@@ -17,6 +18,18 @@ from services.normalize_text import normalize_text
 
 _worker: Optional["AIWorker"] = None
 _worker_lock = threading.Lock()
+_catalog_media_index: Optional[List[Dict[str, object]]] = None
+
+
+def _get_catalog_media_index() -> List[Dict[str, object]]:
+    global _catalog_media_index
+    if _catalog_media_index is None:
+        try:
+            _catalog_media_index = get_catalog_media_keywords()
+        except Exception:
+            logging.warning("No se pudo cargar el catálogo de reglas para la IA", exc_info=True)
+            _catalog_media_index = []
+    return _catalog_media_index or []
 
 
 class AIWorker(threading.Thread):
@@ -145,27 +158,67 @@ class AIWorker(threading.Thread):
 
             ranked.append((match_points, score_value, ref))
 
+        catalog_entries = _get_catalog_media_index()
+        for entry in catalog_entries:
+            image_url = entry.get("media_url")
+            if not image_url:
+                continue
+
+            entry_tokens = entry.get("tokens") or set()
+            if not isinstance(entry_tokens, set):
+                try:
+                    entry_tokens = set(entry_tokens)
+                except TypeError:
+                    continue
+            if not entry_tokens:
+                continue
+
+            common_tokens = entry_tokens & answer_tokens
+            if not common_tokens:
+                continue
+
+            required_matches = 1 if len(entry_tokens) == 1 else min(len(entry_tokens), 2)
+            if len(common_tokens) < required_matches:
+                continue
+
+            label = entry.get("label") or entry.get("raw")
+            caption_text = (entry.get("respuesta") or "").strip() or label
+            pseudo_ref: Dict[str, object] = {
+                "image_url": image_url,
+                "source": label,
+                "text": entry.get("raw") or label,
+                "skus": [],
+                "catalog_caption": caption_text,
+            }
+
+            match_points = max(len(common_tokens) * 10, 5)
+            ranked.append((match_points, 0.0, pseudo_ref))
+
         if not ranked:
             return
 
         ranked.sort(key=lambda item: (-item[0], item[1]))
 
         seen: Set[str] = set()
-        max_images = 3
+        max_images = 1
         sent = 0
         for _, _, ref in ranked:
             image_url = ref.get("image_url")
             if not image_url or image_url in seen:
                 continue
             seen.add(image_url)
-            caption_parts: List[str] = []
-            source = ref.get("source")
-            page = ref.get("page")
-            if source:
-                caption_parts.append(str(source))
-            if page:
-                caption_parts.append(f"pág. {page}")
-            caption = " – ".join(caption_parts) if caption_parts else "Referencia del catálogo"
+            caption_override = (ref.get("catalog_caption") or "").strip()
+            if caption_override:
+                caption = caption_override
+            else:
+                caption_parts: List[str] = []
+                source = ref.get("source")
+                page = ref.get("page")
+                if source:
+                    caption_parts.append(str(source))
+                if page:
+                    caption_parts.append(f"pág. {page}")
+                caption = " – ".join(caption_parts) if caption_parts else "Referencia del catálogo"
             enviar_mensaje(
                 numero,
                 caption,

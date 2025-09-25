@@ -1,8 +1,11 @@
 import json
+import re
+from typing import Dict, List, Set, Tuple
 
 import mysql.connector
 from werkzeug.security import generate_password_hash
 from config import Config
+from services.normalize_text import normalize_text
 
 def get_connection():
     return mysql.connector.connect(
@@ -809,6 +812,105 @@ def get_messages_for_ai(after_id, handoff_step, limit):
     rows = c.fetchall()
     conn.close()
     return rows or []
+
+
+def get_catalog_media_keywords() -> List[Dict[str, object]]:
+    """Obtiene disparadores de reglas con medios catalogados.
+
+    Devuelve una lista de diccionarios con los campos:
+
+    - ``raw``: texto original del disparador (SKU o nombre).
+    - ``normalized``: versión normalizada sin acentos/espacios extra.
+    - ``tokens``: conjunto de tokens normalizados relevantes.
+    - ``media_url``: URL del archivo asociado.
+    - ``media_tipo``: MIME reportado para el archivo.
+    - ``respuesta``: texto configurado en la regla (para rótulos opcionales).
+    - ``step``: paso al que pertenece la regla.
+
+    Solo se consideran reglas con medios que parezcan imágenes, ya que el
+    worker de IA únicamente necesita ilustraciones del catálogo.
+    """
+
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT r.input_text, r.respuesta, r.tipo, r.step,
+               COALESCE(m.media_url, r.media_url)   AS media_url,
+               COALESCE(m.media_tipo, r.media_tipo) AS media_tipo
+          FROM reglas r
+          LEFT JOIN regla_medias m ON r.id = m.regla_id
+         WHERE COALESCE(m.media_url, r.media_url) IS NOT NULL
+        """
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    results: List[Dict[str, object]] = []
+    seen: Set[Tuple[str, str]] = set()
+
+    def _looks_like_image(media_tipo: object, media_url: object) -> bool:
+        if isinstance(media_tipo, str):
+            tipo = media_tipo.strip().lower()
+            if tipo.startswith("image/"):
+                return True
+            if tipo in {"jpeg", "jpg", "png", "gif", "bmp", "webp"}:
+                return True
+        if isinstance(media_url, str):
+            lowered = media_url.lower()
+            for ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"):
+                if lowered.endswith(ext):
+                    return True
+        return False
+
+    for input_text, respuesta, tipo, step, media_url, media_tipo in rows or []:
+        if not media_url:
+            continue
+        if not _looks_like_image(media_tipo, media_url) and str(tipo or "").lower() != "image":
+            continue
+
+        triggers = re.split(r"[,\n]+", input_text or "")
+        for raw_trigger in triggers:
+            raw_trigger = (raw_trigger or "").strip()
+            if not raw_trigger or raw_trigger == "*":
+                continue
+
+            normalized = normalize_text(raw_trigger)
+            if not normalized:
+                continue
+
+            token_list = []
+            for token in normalized.split():
+                if not token:
+                    continue
+                if len(token) >= 3 or any(ch.isdigit() for ch in token):
+                    token_list.append(token)
+            if not token_list:
+                continue
+
+            key = (normalized, str(media_url))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            label = raw_trigger
+            if not label and respuesta:
+                label = (str(respuesta).splitlines() or [""])[0].strip()
+
+            results.append(
+                {
+                    "raw": raw_trigger,
+                    "normalized": normalized,
+                    "tokens": set(token_list),
+                    "media_url": media_url,
+                    "media_tipo": media_tipo,
+                    "respuesta": respuesta,
+                    "step": step,
+                    "label": label or raw_trigger,
+                }
+            )
+
+    return results
 
 
 def log_ai_interaction(numero, pregunta, respuesta, metadata=None):
