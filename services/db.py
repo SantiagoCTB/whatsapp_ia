@@ -665,6 +665,60 @@ def update_ai_last_processed(message_id):
     conn.close()
 
 
+def claim_ai_message(expected_last_id, new_last_id):
+    """Intentar avanzar el puntero de IA de manera atómica."""
+
+    conn = get_connection()
+    c    = conn.cursor()
+
+    try:
+        c.execute(
+            "SELECT last_processed_message_id FROM ia_settings WHERE id = 1 FOR UPDATE"
+        )
+        row = c.fetchone()
+
+        if not row:
+            c.execute(
+                """
+                INSERT INTO ia_settings (
+                    id,
+                    enabled,
+                    last_processed_message_id,
+                    vector_store_path,
+                    updated_at
+                )
+                VALUES (1, %s, %s, %s, NOW())
+                """,
+                (
+                    1 if Config.AI_MODE_DEFAULT else 0,
+                    int(expected_last_id),
+                    Config.AI_VECTOR_STORE_PATH,
+                ),
+            )
+            current_last = int(expected_last_id)
+        else:
+            current_last = int(row[0] or 0)
+
+        if current_last != int(expected_last_id):
+            conn.commit()
+            return False
+
+        c.execute(
+            """
+            UPDATE ia_settings
+               SET last_processed_message_id = %s,
+                   vector_store_path = %s,
+                   updated_at = NOW()
+             WHERE id = 1
+            """,
+            (int(new_last_id), Config.AI_VECTOR_STORE_PATH),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def set_ai_last_processed_to_latest():
     conn = get_connection()
     c    = conn.cursor()

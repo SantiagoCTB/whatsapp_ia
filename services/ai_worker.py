@@ -6,9 +6,9 @@ from typing import Dict, List, Optional, Set
 from config import Config
 from services.ai_responder import get_catalog_responder
 from services.db import (
+    claim_ai_message,
     get_ai_settings,
     get_messages_for_ai,
-    update_ai_last_processed,
     update_chat_state,
 )
 from services.whatsapp_api import enviar_mensaje
@@ -48,11 +48,18 @@ class AIWorker(threading.Thread):
                     message_id = row["id"]
                     numero = row["numero"]
                     texto = row["mensaje"]
+
+                    claimed = claim_ai_message(last_id, message_id)
+                    if not claimed:
+                        last_id = max(last_id, message_id)
+                        continue
+
+                    last_id = message_id
+
                     try:
                         answer, references = responder.answer(numero, texto)
                     except Exception:
                         logging.exception("Error generando respuesta IA para %s", numero)
-                        update_ai_last_processed(message_id)
                         continue
 
                     if answer:
@@ -93,7 +100,6 @@ class AIWorker(threading.Thread):
                                         exc_info=True,
                                     )
                             update_chat_state(numero, Config.AI_HANDOFF_STEP, "ia_fallback")
-                    update_ai_last_processed(message_id)
             except Exception:
                 logging.exception("Fallo general en el worker de IA")
             time.sleep(poll_seconds)
