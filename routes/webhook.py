@@ -106,33 +106,40 @@ def dispatch_rule(numero, regla, step=None):
     regla_id, resp, next_step, tipo_resp, media_urls, opts, rol_kw, _ = regla
     current_step = step or get_current_step(numero)
     media_list = media_urls.split('||') if media_urls else []
-    if tipo_resp in ['image', 'video', 'audio', 'document'] and media_list:
-        enviar_mensaje(
-            numero,
-            resp,
-            tipo_respuesta=tipo_resp,
-            opciones=media_list[0],
-            step=current_step,
-            regla_id=regla_id,
-        )
-        for extra in media_list[1:]:
+    step_name = (step or current_step or '').strip().lower()
+    ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
+    skip_message = bool(ai_step and step_name == ai_step)
+
+    if not skip_message:
+        if tipo_resp in ['image', 'video', 'audio', 'document'] and media_list:
             enviar_mensaje(
                 numero,
-                '',
+                resp,
                 tipo_respuesta=tipo_resp,
-                opciones=extra,
+                opciones=media_list[0],
+                step=current_step,
+                regla_id=regla_id,
+            )
+            for extra in media_list[1:]:
+                enviar_mensaje(
+                    numero,
+                    '',
+                    tipo_respuesta=tipo_resp,
+                    opciones=extra,
+                    step=current_step,
+                    regla_id=regla_id,
+                )
+        else:
+            enviar_mensaje(
+                numero,
+                resp,
+                tipo_respuesta=tipo_resp,
+                opciones=opts,
                 step=current_step,
                 regla_id=regla_id,
             )
     else:
-        enviar_mensaje(
-            numero,
-            resp,
-            tipo_respuesta=tipo_resp,
-            opciones=opts,
-            step=current_step,
-            regla_id=regla_id,
-        )
+        logging.info("Se omite el envío automático para el paso de IA '%s'", step_name)
     if rol_kw:
         conn = get_connection(); c = conn.cursor()
         c.execute("SELECT id FROM roles WHERE keyword=%s", (rol_kw,))
