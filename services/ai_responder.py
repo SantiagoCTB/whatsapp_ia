@@ -912,7 +912,7 @@ class CatalogResponder:
         context = "\n\n".join(context_parts)
         return (
             "Actúas como asesor comercial. Usa únicamente el catálogo proporcionado para responder.\n"
-            "Entrega la respuesta en español neutro, proponiendo opciones con SKU y una breve invitación a continuar la compra.\n"
+            "Entrega la respuesta en español neutro, proponiendo opciones de productos y una breve invitación a continuar la compra.\n"
             "Responde en un único mensaje con frases muy concretas (máximo "
             f"{max(Config.AI_RESPONSE_MAX_SENTENCES, 1)} oraciones cortas). Evita listas extensas y despedidas largas.\n"
             "Si el dato no aparece, informa que no está en el catálogo.\n\n"
@@ -932,7 +932,7 @@ class CatalogResponder:
                                 "type": "input_text",
                                 "text": (
                                     "Eres un asistente experto en productos. Utiliza solo la información suministrada en el contexto."
-                                    " Indica SKU y página cuando sea posible."
+                                    "Indica el producto y página del catálogo cuando sea posible."
                                 ),
                             }
                         ],
