@@ -90,6 +90,7 @@ Las variables se cargan desde `.env` mediante `python-dotenv` y están centraliz
 | `AI_PAGE_IMAGE_FORMAT` | Formato de imagen para las vistas previas (`JPEG`, `PNG`, etc.). |
 | `AI_PAGE_IMAGE_SCALE` | Factor de escala al renderizar la página antes de guardar la imagen (por defecto `2.0`). |
 | `AI_PAGE_IMAGE_QUALITY` | Calidad de compresión cuando el formato es JPEG (por defecto `85`). |
+| `MEDIA_PUBLIC_BASE_URL` | URL base pública para servir archivos en `MEDIA_ROOT` (por ejemplo `https://midominio.com/static/uploads/`). Si no se define se genera un enlace relativo usando `/static/`. |
 
 ## Requisitos previos
 - Python 3.9+ (incluye `venv`).

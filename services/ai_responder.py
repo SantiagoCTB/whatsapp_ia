@@ -6,6 +6,7 @@ import threading
 import hashlib
 import re
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urljoin
 
 import faiss
 import numpy as np
@@ -107,6 +108,7 @@ class CatalogResponder:
             self._index = faiss.read_index(self._index_path)
             with open(self._metadata_path, "r", encoding="utf-8") as fh:
                 self._metadata = json.load(fh)
+            self._augment_metadata_with_images(self._metadata)
             self._last_mtime = mtime
 
     def _ensure_tesseract_available(self) -> bool:
@@ -119,6 +121,30 @@ class CatalogResponder:
 
         try:
             pytesseract.get_tesseract_version()
+            required_langs = self._resolve_tesseract_langs()
+            available_langs: Optional[List[str]] = None
+            if hasattr(pytesseract, "get_languages"):
+                try:
+                    tess_config = Config.AI_OCR_TESSERACT_CONFIG or ""
+                    available_langs = pytesseract.get_languages(config=tess_config)
+                except Exception:
+                    logging.warning(
+                        "No se pudieron obtener los idiomas instalados de Tesseract.",
+                        exc_info=True,
+                    )
+            if available_langs is not None:
+                missing = [lang for lang in required_langs if lang not in set(available_langs or [])]
+                if missing:
+                    logging.warning(
+                        "Tesseract está instalado pero faltan los paquetes de idioma requeridos: %s",
+                        ", ".join(missing),
+                    )
+                    self._tesseract_ready = False
+                    return False
+            else:
+                logging.info(
+                    "No fue posible validar los idiomas de Tesseract; se continuará con la configuración declarada."
+                )
         except Exception as exc:
             tesseract_mod = getattr(pytesseract, "pytesseract", None)
             not_found_exc = getattr(tesseract_mod, "TesseractNotFoundError", None) if tesseract_mod else None
@@ -177,6 +203,50 @@ class CatalogResponder:
         return self._easyocr_reader
 
     @staticmethod
+    def _resolve_tesseract_langs() -> List[str]:
+        raw = (Config.AI_OCR_LANG or "").strip()
+        if not raw:
+            return ["spa", "eng"]
+
+        tokens = [tok for tok in re.split(r"[+,;\s]+", raw) if tok]
+        mapping = {
+            "es": "spa",
+            "spa": "spa",
+            "esp": "spa",
+            "español": "spa",
+            "english": "eng",
+            "en": "eng",
+            "inglés": "eng",
+            "eng": "eng",
+            "fr": "fra",
+            "fra": "fra",
+            "francés": "fra",
+            "it": "ita",
+            "ita": "ita",
+            "pt": "por",
+            "por": "por",
+            "portugués": "por",
+            "de": "deu",
+            "ger": "deu",
+            "deu": "deu",
+        }
+
+        resolved: List[str] = []
+        for token in tokens:
+            norm = token.strip().lower()
+            if not norm:
+                continue
+            mapped = mapping.get(norm, norm)
+            if mapped not in resolved:
+                resolved.append(mapped)
+
+        if "spa" not in resolved:
+            resolved.insert(0, "spa")
+        if "eng" not in resolved:
+            resolved.append("eng")
+        return resolved
+
+    @staticmethod
     def _resolve_easyocr_langs() -> List[str]:
         raw = (Config.AI_OCR_EASYOCR_LANGS or Config.AI_OCR_LANG or "").strip()
         if not raw:
@@ -205,6 +275,8 @@ class CatalogResponder:
             mapped = mapping.get(norm, norm)
             if mapped not in resolved:
                 resolved.append(mapped)
+        if "es" not in resolved:
+            resolved.insert(0, "es")
         return resolved or ["es", "en"]
 
     @staticmethod
@@ -220,6 +292,60 @@ class CatalogResponder:
             logging.warning("No se pudo calcular el hash del PDF, se usará la ruta como clave.", exc_info=True)
             return hashlib.sha1(pdf_path.encode("utf-8")).hexdigest()
         return sha1.hexdigest()
+
+    def _augment_metadata_with_images(self, metadata: List[Dict[str, object]]) -> None:
+        for item in metadata:
+            if not isinstance(item, dict):
+                continue
+            image_path = item.get("image")
+            if image_path and not item.get("image_url"):
+                url = self._build_public_image_url(str(image_path))
+                if url:
+                    item["image_url"] = url
+
+    def _build_public_image_url(self, relative_path: Optional[str]) -> Optional[str]:
+        if not relative_path:
+            return None
+
+        relative_path = str(relative_path).strip()
+        if not relative_path:
+            return None
+
+        normalized_rel = relative_path.replace("\\", "/")
+        base_url = (Config.MEDIA_PUBLIC_BASE_URL or "").strip()
+        if base_url:
+            if not base_url.endswith("/"):
+                base_url = f"{base_url}/"
+            return urljoin(base_url, normalized_rel.lstrip("/"))
+
+        static_root = os.path.join(Config.BASEDIR, "static")
+        abs_media_path = os.path.normpath(os.path.join(Config.MEDIA_ROOT, relative_path))
+        try:
+            common = os.path.commonpath([abs_media_path, static_root])
+        except ValueError:
+            common = None
+
+        if common and os.path.normpath(common) == os.path.normpath(static_root):
+            rel_to_static = os.path.relpath(abs_media_path, static_root).replace(os.sep, "/")
+            try:
+                from flask import url_for
+
+                return url_for("static", filename=rel_to_static, _external=True)
+            except Exception:
+                return f"/static/{rel_to_static}"
+
+        return None
+
+    def _prepare_reference(self, reference: Dict[str, object]) -> Dict[str, object]:
+        ref = dict(reference)
+        image_path = ref.get("image")
+        if image_path and not ref.get("image_url"):
+            url = self._build_public_image_url(str(image_path))
+            if url:
+                ref["image_url"] = url
+                if isinstance(reference, dict):
+                    reference.setdefault("image_url", url)
+        return ref
 
     def _ensure_page_image(
         self,
@@ -622,6 +748,7 @@ class CatalogResponder:
                             "skus": self._extract_skus(chunk),
                             "backend": page_backend,
                             "image": image_path,
+                            "image_url": self._build_public_image_url(image_path),
                         }
                     )
                     chunks.append(chunk)
@@ -685,6 +812,7 @@ class CatalogResponder:
         index.add(matrix)
 
         with self._index_lock:
+            self._augment_metadata_with_images(metadata)
             faiss.write_index(index, self._index_path)
             with open(self._metadata_path, "w", encoding="utf-8") as fh:
                 json.dump(metadata, fh, ensure_ascii=False, indent=2)
@@ -717,7 +845,12 @@ class CatalogResponder:
             try:
                 cached = json.loads(cache_payload)
                 answer = cached.get("answer")
-                references = cached.get("references") or []
+                raw_references = cached.get("references") or []
+                references = [
+                    self._prepare_reference(ref)
+                    for ref in raw_references
+                    if isinstance(ref, dict)
+                ]
             except Exception:
                 logging.warning("No se pudo decodificar caché de IA, se descarta.")
                 answer = None
@@ -743,7 +876,7 @@ class CatalogResponder:
         for idx, dist in zip(indices[0], distances[0]):
             if idx < 0 or idx >= len(self._metadata):
                 continue
-            ref = dict(self._metadata[idx])
+            ref = self._prepare_reference(self._metadata[idx])
             ref["score"] = float(dist)
             references.append(ref)
 

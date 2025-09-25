@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Dict, List, Optional, Set
 
 from config import Config
 from services.ai_responder import get_catalog_responder
@@ -49,36 +49,74 @@ class AIWorker(threading.Thread):
                     numero = row["numero"]
                     texto = row["mensaje"]
                     try:
-                        answer, _references = responder.answer(numero, texto)
+                        answer, references = responder.answer(numero, texto)
                     except Exception:
                         logging.exception("Error generando respuesta IA para %s", numero)
                         update_ai_last_processed(message_id)
                         continue
 
                     if answer:
-                        enviar_mensaje(
+                        enviado = enviar_mensaje(
                             numero,
                             answer,
                             tipo="bot",
                             tipo_respuesta="texto",
                             step=Config.AI_HANDOFF_STEP,
                         )
+                        if enviado:
+                            self._send_reference_images(numero, references)
                         update_chat_state(numero, Config.AI_HANDOFF_STEP, "ia_activa")
                     else:
                         fallback = (Config.AI_FALLBACK_MESSAGE or "").strip()
                         if fallback:
-                            enviar_mensaje(
+                            enviado = enviar_mensaje(
                                 numero,
                                 fallback,
                                 tipo="bot",
                                 tipo_respuesta="texto",
                                 step=Config.AI_HANDOFF_STEP,
                             )
+                            if enviado:
+                                self._send_reference_images(numero, references)
                             update_chat_state(numero, Config.AI_HANDOFF_STEP, "ia_fallback")
                     update_ai_last_processed(message_id)
             except Exception:
                 logging.exception("Fallo general en el worker de IA")
             time.sleep(poll_seconds)
+
+    def _send_reference_images(self, numero: str, references: List[Dict[str, object]]) -> None:
+        if not references:
+            return
+
+        seen: Set[str] = set()
+        max_images = 3
+        sent = 0
+        for ref in references:
+            if not isinstance(ref, dict):
+                continue
+            image_url = ref.get("image_url")
+            if not image_url or image_url in seen:
+                continue
+            seen.add(image_url)
+            caption_parts: List[str] = []
+            source = ref.get("source")
+            page = ref.get("page")
+            if source:
+                caption_parts.append(str(source))
+            if page:
+                caption_parts.append(f"pág. {page}")
+            caption = " – ".join(caption_parts) if caption_parts else "Referencia del catálogo"
+            enviar_mensaje(
+                numero,
+                caption,
+                tipo="bot",
+                tipo_respuesta="image",
+                opciones=str(image_url),
+                step=Config.AI_HANDOFF_STEP,
+            )
+            sent += 1
+            if sent >= max_images:
+                break
 
 
 def start_ai_worker() -> AIWorker:
