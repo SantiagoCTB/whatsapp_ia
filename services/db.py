@@ -804,10 +804,11 @@ def get_messages_for_ai(after_id, handoff_step, limit):
            AND m.tipo = 'cliente'
            AND TRIM(COALESCE(m.mensaje, '')) <> ''
            AND LOWER(COALESCE(cs.step, '')) = %s
+           AND LOWER(COALESCE(m.step, '')) = %s
          ORDER BY m.id ASC
          LIMIT %s
         """,
-        (after_id, (handoff_step or '').lower(), limit),
+        (after_id, (handoff_step or '').lower(), (handoff_step or '').lower(), limit),
     )
     rows = c.fetchall()
     conn.close()
