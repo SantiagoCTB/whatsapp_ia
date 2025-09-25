@@ -379,14 +379,16 @@ def webhook():
                 wa_id       = msg.get('id')
                 reply_to_id = msg.get('context', {}).get('id')
 
-                # evitar duplicados
+                # evitar duplicados incluso ante entregas concurrentes
                 conn = get_connection(); c = conn.cursor()
-                c.execute("SELECT 1 FROM mensajes_procesados WHERE mensaje_id = %s", (wa_id,))
-                if c.fetchone():
-                    conn.close()
-                    continue
-                c.execute("INSERT INTO mensajes_procesados (mensaje_id) VALUES (%s)", (wa_id,))
+                c.execute(
+                    "INSERT IGNORE INTO mensajes_procesados (mensaje_id) VALUES (%s)",
+                    (wa_id,),
+                )
+                inserted = c.rowcount > 0
                 conn.commit(); conn.close()
+                if not inserted:
+                    continue
 
                 if msg.get("referral"):
                     ref = msg["referral"]
