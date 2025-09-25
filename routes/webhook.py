@@ -140,6 +140,11 @@ def dispatch_rule(numero, regla, step=None):
             fallback = (Config.AI_FALLBACK_MESSAGE or '').strip() or DEFAULT_FALLBACK_TEXT
             resp = fallback
             should_skip = not bool(resp)
+
+            and tipo_resp == 'texto'
+            and not (resp or '').strip()
+        )
+
         if not should_skip:
             enviar_mensaje(
                 numero,
