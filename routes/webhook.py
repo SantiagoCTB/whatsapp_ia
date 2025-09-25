@@ -105,6 +105,9 @@ def dispatch_rule(numero, regla, step=None):
     """Envía la respuesta definida en una regla y asigna roles si aplica."""
     regla_id, resp, next_step, tipo_resp, media_urls, opts, rol_kw, _ = regla
     current_step = step or get_current_step(numero)
+    current_step_lower = (current_step or '').strip().lower()
+    ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
+    is_ai_handoff_step = bool(ai_step) and current_step_lower == ai_step
     media_list = media_urls.split('||') if media_urls else []
     if tipo_resp in ['image', 'video', 'audio', 'document'] and media_list:
         enviar_mensaje(
@@ -115,15 +118,16 @@ def dispatch_rule(numero, regla, step=None):
             step=current_step,
             regla_id=regla_id,
         )
-        for extra in media_list[1:]:
-            enviar_mensaje(
-                numero,
-                '',
-                tipo_respuesta=tipo_resp,
-                opciones=extra,
-                step=current_step,
-                regla_id=regla_id,
-            )
+        if not is_ai_handoff_step:
+            for extra in media_list[1:]:
+                enviar_mensaje(
+                    numero,
+                    '',
+                    tipo_respuesta=tipo_resp,
+                    opciones=extra,
+                    step=current_step,
+                    regla_id=regla_id,
+                )
     else:
         enviar_mensaje(
             numero,
