@@ -110,7 +110,7 @@ class AIWorker(threading.Thread):
         answer_text: Optional[str],
         references: List[Dict[str, object]],
     ) -> None:
-        if not references:
+        if not references or not answer_text:
             return
 
         seen: Set[str] = set()
@@ -123,7 +123,30 @@ class AIWorker(threading.Thread):
 
         filtered_refs: List[Dict[str, object]] = []
         fallback_refs: List[Dict[str, object]] = []
+        if not skus_in_answer:
+            return
+
         for ref in references:
+            if not isinstance(ref, dict):
+                continue
+            ref_skus_raw = ref.get("skus")
+            if not isinstance(ref_skus_raw, (list, tuple, set)):
+                continue
+            ref_skus = {
+                str(sku).strip().upper()
+                for sku in ref_skus_raw
+                if isinstance(sku, str) and sku.strip()
+            }
+            if not ref_skus:
+                continue
+            if ref_skus & skus_in_answer:
+                filtered_refs.append(ref)
+
+        if not filtered_refs:
+            return
+
+        sent = 0
+        for ref in filtered_refs:
             if not isinstance(ref, dict):
                 continue
             image_url = ref.get("image_url")

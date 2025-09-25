@@ -108,7 +108,7 @@ def dispatch_rule(numero, regla, step=None):
     media_list = media_urls.split('||') if media_urls else []
     step_name = (step or current_step or '').strip().lower()
     ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
-    skip_message = bool(ai_step and step_name == ai_step)
+    skip_message = bool(ai_step and step_name == ai_step and is_ai_enabled())
 
     if not skip_message:
         if tipo_resp in ['image', 'video', 'audio', 'document'] and media_list:
