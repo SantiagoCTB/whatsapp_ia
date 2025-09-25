@@ -23,7 +23,9 @@ def process_audio(
         update_mensaje_texto(mensaje_id, texto)
 
         if texto:
-            handle_text_message(from_number, texto)
+            # El mensaje original ya fue almacenado como tipo 'audio'.
+            # Evitamos crear un duplicado marcándolo como texto nuevamente.
+            handle_text_message(from_number, texto, save=False)
         else:
             enviar_mensaje(
                 from_number,
