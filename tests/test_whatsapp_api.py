@@ -86,3 +86,74 @@ def test_flow_header_from_dict(post_call):
     assert header["type"] == "text"
     assert header["text"] == "12345"
     assert isinstance(header["text"], str)
+
+
+def test_flow_action_payload_accepts_string(post_call):
+    opciones = json.dumps({
+        "flow_cta": "CTA",
+        "flow_id": "FLOW123",
+        "flow_action_payload": "RAW_STRING_PAYLOAD",
+    })
+
+    result = whatsapp_api.enviar_mensaje(
+        numero="1111111111",
+        mensaje="Mensaje",
+        tipo="bot",
+        tipo_respuesta="flow",
+        opciones=opciones,
+    )
+
+    assert result is True
+    payload = (
+        post_call["payload"]["interactive"]["action"]["parameters"]["flow_action_payload"]
+    )
+    assert payload == "RAW_STRING_PAYLOAD"
+
+
+def test_flow_action_payload_cleans_dict(post_call):
+    opciones = json.dumps({
+        "flow_cta": "CTA",
+        "flow_name": "Flow Name",
+        "flow_action_payload": {
+            "screen": "   Screen Name   ",
+            "data": {"foo": "bar"},
+            "unused": "",
+        },
+    })
+
+    result = whatsapp_api.enviar_mensaje(
+        numero="2222222222",
+        mensaje="Mensaje",
+        tipo="bot",
+        tipo_respuesta="flow",
+        opciones=opciones,
+    )
+
+    assert result is True
+    payload = (
+        post_call["payload"]["interactive"]["action"]["parameters"]["flow_action_payload"]
+    )
+    assert payload == {"screen": "Screen Name", "data": {"foo": "bar"}}
+
+
+def test_flow_action_payload_omits_empty_values(post_call):
+    opciones = json.dumps({
+        "flow_cta": "CTA",
+        "flow_id": "FLOW456",
+        "flow_action_payload": {
+            "screen": "   ",
+            "data": {},
+        },
+    })
+
+    result = whatsapp_api.enviar_mensaje(
+        numero="3333333333",
+        mensaje="Mensaje",
+        tipo="bot",
+        tipo_respuesta="flow",
+        opciones=opciones,
+    )
+
+    assert result is True
+    parameters = post_call["payload"]["interactive"]["action"]["parameters"]
+    assert "flow_action_payload" not in parameters
