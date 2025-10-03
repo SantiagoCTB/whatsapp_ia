@@ -116,9 +116,25 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
         except Exception:
             opts = {}
 
-        header = opts.get("header")
-        if isinstance(header, str):
-            header = header.strip() or None
+        allowed_header_types = {"text"}
+        header_raw = opts.get("header")
+        header_text = None
+        header_type = "text"
+        if isinstance(header_raw, str):
+            header_text = header_raw.strip()
+        elif isinstance(header_raw, dict):
+            header_value = header_raw.get("text")
+            if header_value is not None:
+                header_text = str(header_value).strip()
+            header_type_candidate = header_raw.get("type")
+            if isinstance(header_type_candidate, str):
+                header_type_candidate = header_type_candidate.strip().lower() or None
+                if header_type_candidate in allowed_header_types:
+                    header_type = header_type_candidate
+        elif header_raw is not None:
+            header_text = str(header_raw).strip()
+        if header_text == "":
+            header_text = None
         footer = opts.get("footer")
         if isinstance(footer, str):
             footer = footer.strip() or None
@@ -189,8 +205,10 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
             },
         }
 
-        if header:
-            data["interactive"]["header"] = {"type": "text", "text": header}
+        if header_text:
+            if header_type not in allowed_header_types:
+                header_type = "text"
+            data["interactive"]["header"] = {"type": header_type, "text": header_text}
         if footer:
             data["interactive"]["footer"] = {"text": footer}
 
