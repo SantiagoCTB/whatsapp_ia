@@ -38,6 +38,7 @@
         <option value="document">Documento</option>
         <option value="video">Video</option>
         <option value="audio">Audio</option>
+        <option value="flow">Flow</option>
     </select>
 
     <label for="media" id="label_media_file" style="display:none;">Subir archivo:</label>
@@ -69,6 +70,42 @@
 
     <label for="sections" class="list-field" style="display:none;">Secciones (formato JSON):</label><br>
     <textarea id="sections" name="sections" class="list-field" style="display:none;" rows="6" cols="60" placeholder='[{"title":"Rápido","rows":[{"id":"express","title":"Express","description":"1 día"}]}]'></textarea>
+
+    <label for="flow_cta" class="flow-field" style="display:none;">CTA:</label>
+    <input type="text" id="flow_cta" name="flow_cta" class="flow-field" style="display:none;">
+
+    <label for="flow_id" class="flow-field" style="display:none;">Flow ID:</label>
+    <input type="text" id="flow_id" name="flow_id" class="flow-field" style="display:none;">
+
+    <label for="flow_name" class="flow-field" style="display:none;">Flow Name:</label>
+    <input type="text" id="flow_name" name="flow_name" class="flow-field" style="display:none;">
+
+    <label for="flow_version" class="flow-field" style="display:none;">Versión:</label>
+    <input type="number" id="flow_version" name="flow_version" class="flow-field" style="display:none;" min="1" value="3">
+
+    <label for="flow_mode" class="flow-field" style="display:none;">Modo:</label>
+    <input type="text" id="flow_mode" name="flow_mode" class="flow-field" style="display:none;">
+
+    <label for="flow_token" class="flow-field" style="display:none;">Token:</label>
+    <input type="text" id="flow_token" name="flow_token" class="flow-field" style="display:none;">
+
+    <label for="flow_action" class="flow-field" style="display:none;">Acción:</label>
+    <select id="flow_action" name="flow_action" class="flow-field" style="display:none;">
+        <option value="navigate">navigate</option>
+        <option value="data_exchange">data_exchange</option>
+    </select>
+
+    <label for="flow_initial_screen" class="flow-field" style="display:none;">Pantalla inicial:</label>
+    <input type="text" id="flow_initial_screen" name="flow_initial_screen" class="flow-field" style="display:none;">
+
+    <label for="flow_payload" class="flow-field" style="display:none;">Payload (JSON):</label>
+    <textarea id="flow_payload" name="flow_payload" class="flow-field" style="display:none;" rows="4" cols="60" placeholder='{"key":"value"}'></textarea>
+
+    <label for="flow_header_text" class="flow-field" style="display:none;">Texto del header:</label>
+    <input type="text" id="flow_header_text" name="flow_header_text" class="flow-field" style="display:none;">
+
+    <label for="flow_footer_text" class="flow-field" style="display:none;">Texto del footer:</label>
+    <input type="text" id="flow_footer_text" name="flow_footer_text" class="flow-field" style="display:none;">
     <input type="hidden" name="opciones" id="opciones">
 
     <button type="submit" class="btn-primary">Guardar regla</button>
@@ -159,6 +196,13 @@ function toggleButtonFields() {
     });
 }
 
+function toggleFlowFields() {
+    const isFlow = document.getElementById('tipo').value === 'flow';
+    document.querySelectorAll('.flow-field').forEach(el => {
+        el.style.display = isFlow ? 'block' : 'none';
+    });
+}
+
 function prepareOptions(e) {
     const tipo = document.getElementById('tipo').value;
     const opcionesInput = document.getElementById('opciones');
@@ -195,6 +239,86 @@ function prepareOptions(e) {
             }
         }
         opcionesInput.value = text;
+    } else if (tipo === 'flow') {
+        const cta = document.getElementById('flow_cta').value.trim();
+        const flowId = document.getElementById('flow_id').value.trim();
+        const flowName = document.getElementById('flow_name').value.trim();
+        const flowVersionInput = document.getElementById('flow_version');
+        const flowVersion = (flowVersionInput.value || flowVersionInput.getAttribute('value') || '3').toString().trim();
+        const flowMode = document.getElementById('flow_mode').value.trim();
+        const flowToken = document.getElementById('flow_token').value.trim();
+        const flowAction = document.getElementById('flow_action').value;
+        const flowInitialScreen = document.getElementById('flow_initial_screen').value.trim();
+        const payloadText = document.getElementById('flow_payload').value.trim();
+        const headerText = document.getElementById('flow_header_text').value.trim();
+        const footerText = document.getElementById('flow_footer_text').value.trim();
+
+        if (!cta) {
+            alert('Debes ingresar un CTA para el flow.');
+            e.preventDefault();
+            return;
+        }
+
+        if (!flowId && !flowName) {
+            alert('Debes ingresar un Flow ID o un Flow Name.');
+            e.preventDefault();
+            return;
+        }
+
+        if (!flowMode) {
+            alert('Debes ingresar el modo del flow.');
+            e.preventDefault();
+            return;
+        }
+
+        let payload;
+        if (payloadText) {
+            try {
+                payload = JSON.parse(payloadText);
+            } catch (err) {
+                alert('El payload del flow debe ser un JSON válido.');
+                e.preventDefault();
+                return;
+            }
+        }
+
+        const parameters = {
+            flow_cta: cta,
+            flow_action: flowAction,
+            flow_version: flowVersion || '3',
+            flow_mode: flowMode
+        };
+
+        if (flowId) {
+            parameters.flow_id = flowId;
+        }
+
+        if (flowName) {
+            parameters.flow_name = flowName;
+        }
+
+        if (flowToken) {
+            parameters.flow_token = flowToken;
+        }
+
+        if (flowInitialScreen) {
+            parameters.flow_initial_screen = flowInitialScreen;
+        }
+
+        if (typeof payload !== 'undefined') {
+            parameters.flow_action_payload = payload;
+        }
+
+        const opts = {
+            header: { type: 'text', text: headerText },
+            footer: { text: footerText },
+            action: {
+                name: 'flow',
+                parameters
+            }
+        };
+
+        opcionesInput.value = JSON.stringify(opts);
     } else {
         opcionesInput.value = '';
     }
@@ -203,6 +327,7 @@ document.getElementById('tipo').addEventListener('change', () => {
     toggleMediaFields();
     toggleListFields();
     toggleButtonFields();
+    toggleFlowFields();
 });
 const form = document.getElementById('reglaForm');
 form.addEventListener('submit', prepareOptions);
@@ -210,6 +335,7 @@ window.addEventListener('DOMContentLoaded', () => {
     toggleMediaFields();
     toggleListFields();
     toggleButtonFields();
+    toggleFlowFields();
 });
 
 function cargarRegla(regla) {
@@ -230,6 +356,17 @@ function cargarRegla(regla) {
     document.getElementById('sections').value = '';
     document.getElementById('button_options').value = '';
     document.getElementById('opciones').value = '';
+    document.getElementById('flow_cta').value = '';
+    document.getElementById('flow_id').value = '';
+    document.getElementById('flow_name').value = '';
+    document.getElementById('flow_version').value = '3';
+    document.getElementById('flow_mode').value = '';
+    document.getElementById('flow_token').value = '';
+    document.getElementById('flow_action').value = 'navigate';
+    document.getElementById('flow_initial_screen').value = '';
+    document.getElementById('flow_payload').value = '';
+    document.getElementById('flow_header_text').value = '';
+    document.getElementById('flow_footer_text').value = '';
     if (regla.tipo === 'lista' && regla.opciones) {
         try {
             const opts = JSON.parse(regla.opciones);
@@ -244,12 +381,43 @@ function cargarRegla(regla) {
     } else if (regla.tipo === 'boton') {
         document.getElementById('button_options').value = regla.opciones || '';
         document.getElementById('opciones').value = regla.opciones || '';
+    } else if (regla.tipo === 'flow' && regla.opciones) {
+        let opts = null;
+        try {
+            opts = typeof regla.opciones === 'string' ? JSON.parse(regla.opciones) : regla.opciones;
+        } catch (e) {
+            opts = null;
+        }
+
+        if (opts) {
+            const header = opts.header && (opts.header.text || opts.header.value || '');
+            const footer = opts.footer && (opts.footer.text || '');
+            document.getElementById('flow_header_text').value = header || '';
+            document.getElementById('flow_footer_text').value = footer || '';
+
+            const params = (opts.action && opts.action.parameters) || {};
+            document.getElementById('flow_cta').value = params.flow_cta || '';
+            document.getElementById('flow_id').value = params.flow_id || '';
+            document.getElementById('flow_name').value = params.flow_name || '';
+            document.getElementById('flow_version').value = params.flow_version || '3';
+            document.getElementById('flow_mode').value = params.flow_mode || '';
+            document.getElementById('flow_token').value = params.flow_token || '';
+            document.getElementById('flow_action').value = params.flow_action || 'navigate';
+            document.getElementById('flow_initial_screen').value = params.flow_initial_screen || '';
+            if (params.flow_action_payload) {
+                document.getElementById('flow_payload').value = JSON.stringify(params.flow_action_payload, null, 2);
+            }
+            document.getElementById('opciones').value = JSON.stringify(opts);
+        } else {
+            document.getElementById('opciones').value = regla.opciones || '';
+        }
     } else {
         document.getElementById('opciones').value = regla.opciones || '';
     }
     toggleMediaFields();
     toggleListFields();
     toggleButtonFields();
+    toggleFlowFields();
 }
 </script>
 {% endblock %}
