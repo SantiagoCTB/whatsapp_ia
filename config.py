@@ -34,6 +34,7 @@ class Config:
     AI_GEN_MODEL     = os.getenv('AI_GEN_MODEL', 'gpt-4o-mini')
     AI_MODE_DEFAULT  = _env_bool('AI_MODE_ENABLED', False)
     AI_HANDOFF_STEP  = os.getenv('AI_HANDOFF_STEP', 'ia_chat').strip().lower()
+    AI_KEYWORD_REDIRECT_STEP = os.getenv('AI_KEYWORD_REDIRECT_STEP', 'flow').strip().lower()
     AI_VECTOR_STORE_PATH = os.getenv(
         'AI_VECTOR_STORE_PATH',
         os.path.join(BASEDIR, 'data', 'catalog_index')
