@@ -14,16 +14,23 @@
     <thead>
         <tr>
             <th>Número</th>
-            <th>Fecha</th>
-            <th>Respuesta del flow</th>
+            <th>Respuestas del flow</th>
         </tr>
     </thead>
     <tbody>
         {% for response in flow_responses %}
         <tr>
             <td>{{ response.numero }}</td>
-            <td>{{ response.timestamp }}</td>
-            <td>{{ response.mensaje }}</td>
+            <td>
+                <ul class="flow-responses-list">
+                    {% for resp in response.respuestas %}
+                    <li>
+                        <span class="flow-response-timestamp">{{ resp.timestamp }}</span>
+                        <div class="flow-response-message">{{ resp.mensaje }}</div>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </td>
         </tr>
         {% endfor %}
     </tbody>
