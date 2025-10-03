@@ -530,7 +530,44 @@ def webhook():
                     timer.start()
                     return jsonify({'status': 'buffered'}), 200
                 elif 'interactive' in msg:
-                    opt = msg['interactive'].get('list_reply') or msg['interactive'].get('button_reply') or {}
+                    interactive_payload = msg['interactive']
+                    flow_payload = interactive_payload.get('nfm_reply') or interactive_payload.get('flow_reply')
+                    if flow_payload:
+                        response_json = flow_payload.get('response_json')
+                        body_text = flow_payload.get('body_text')
+                        data_fields = flow_payload.get('data')
+                        parts = []
+                        if body_text:
+                            parts.append(body_text.strip())
+                        if data_fields:
+                            try:
+                                parts.append(json.dumps(data_fields, ensure_ascii=False))
+                            except (TypeError, ValueError):
+                                parts.append(str(data_fields))
+                        if response_json:
+                            if isinstance(response_json, (dict, list)):
+                                parts.append(json.dumps(response_json, ensure_ascii=False))
+                            else:
+                                parts.append(str(response_json))
+                        if not parts:
+                            try:
+                                parts.append(json.dumps(flow_payload, ensure_ascii=False))
+                            except (TypeError, ValueError):
+                                parts.append(str(flow_payload))
+                        flow_text = "\n".join(filter(None, parts))
+                        step = get_current_step(from_number)
+                        guardar_mensaje(
+                            from_number,
+                            flow_text,
+                            'cliente',
+                            wa_id=wa_id,
+                            reply_to_wa_id=reply_to_id,
+                            step=step,
+                        )
+                        update_chat_state(from_number, step, 'sin_respuesta')
+                        logging.info("Respuesta de Flow recibida para %s", from_number)
+                        return jsonify({'status': 'flow_recorded'}), 200
+                    opt = interactive_payload.get('list_reply') or interactive_payload.get('button_reply') or {}
                     option_id = opt.get('id') or ''
                     text = (opt.get('title') or '').strip()
                     step = get_current_step(from_number)
