@@ -110,6 +110,90 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
             }
         }
 
+    elif tipo_respuesta == 'flow':
+        try:
+            opts = json.loads(opciones) if opciones else {}
+        except Exception:
+            opts = {}
+
+        header = opts.get("header")
+        if isinstance(header, str):
+            header = header.strip() or None
+        footer = opts.get("footer")
+        if isinstance(footer, str):
+            footer = footer.strip() or None
+
+        action_raw = opts.get("action") or {}
+        parameters_raw = action_raw.get("parameters") or opts.get("parameters") or {}
+
+        flow_parameters = {}
+
+        flow_message_version = parameters_raw.get("flow_message_version") or opts.get("flow_message_version") or "3"
+        flow_parameters["flow_message_version"] = str(flow_message_version)
+
+        keys_to_copy = [
+            "flow_cta",
+            "flow_id",
+            "flow_name",
+            "mode",
+            "flow_token",
+            "flow_action",
+        ]
+        for key in keys_to_copy:
+            value = parameters_raw.get(key)
+            if value is None:
+                value = action_raw.get(key)
+            if value is None:
+                value = opts.get(key)
+            if isinstance(value, str):
+                value = value.strip()
+            if value:
+                flow_parameters[key] = value
+
+        payload_raw = (
+            parameters_raw.get("flow_action_payload")
+            or action_raw.get("flow_action_payload")
+            or opts.get("flow_action_payload")
+            or {}
+        )
+        if isinstance(payload_raw, dict):
+            payload = {}
+            screen_value = payload_raw.get("screen")
+            if isinstance(screen_value, str):
+                screen_value = screen_value.strip()
+            if screen_value:
+                payload["screen"] = screen_value
+            data_value = payload_raw.get("data")
+            if data_value not in (None, ""):
+                payload["data"] = data_value
+            if payload:
+                flow_parameters["flow_action_payload"] = payload
+
+        flow_cta = flow_parameters.get("flow_cta")
+        flow_id = flow_parameters.get("flow_id")
+        flow_name = flow_parameters.get("flow_name")
+        if not flow_cta or not (flow_id or flow_name):
+            return False
+
+        data = {
+            "messaging_product": "whatsapp",
+            "to": numero,
+            "type": "interactive",
+            "interactive": {
+                "type": "flow",
+                "body": {"text": mensaje},
+                "action": {
+                    "name": "flow",
+                    "parameters": flow_parameters,
+                },
+            },
+        }
+
+        if header:
+            data["interactive"]["header"] = {"type": "text", "text": header}
+        if footer:
+            data["interactive"]["footer"] = {"text": footer}
+
     elif tipo_respuesta == 'audio':
         if opciones and os.path.isfile(opciones):
             filename   = os.path.basename(opciones)
@@ -188,7 +272,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
     except Exception:
         wa_id = None
     tipo_db = tipo
-    if tipo_respuesta in {"image", "audio", "video", "document"} and "_" not in tipo:
+    if tipo_respuesta in {"image", "audio", "video", "document", "flow"} and "_" not in tipo:
         tipo_db = f"{tipo}_{tipo_respuesta}"
 
     media_url_db = None
@@ -196,7 +280,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
         media_url_db = video_obj.get("link")
     elif tipo_respuesta == 'audio':
         media_url_db = audio_obj.get("link")
-    else:
+    elif tipo_respuesta not in {"flow"}:
         media_url_db = opciones
 
     guardar_mensaje(
