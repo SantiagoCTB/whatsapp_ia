@@ -331,13 +331,29 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
         process_step_chain(numero, 'iniciar')
         return
 
+    text_norm = normalize_text(texto or "")
+
     step_lower = (step_db or '').strip().lower()
     ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
     if ai_step and step_lower == ai_step and is_ai_enabled():
+        redirect_step = (Config.AI_KEYWORD_REDIRECT_STEP or '').strip().lower()
+        keywords = {
+            "domicilio",
+            "comprar",
+            "pedido",
+            "entrega",
+            "envio",
+            "pagar",
+            "precio",
+            "llevar",
+        }
+        tokens = set(text_norm.split())
+        if redirect_step and tokens & keywords:
+            advance_steps(numero, redirect_step)
+            process_step_chain(numero)
+            return
         update_chat_state(numero, step_db, 'ia_pendiente')
         return
-
-    text_norm = normalize_text(texto or "")
 
     if handle_global_command(numero, texto):
         return
