@@ -170,9 +170,11 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
             parameters_raw.get("flow_action_payload")
             or action_raw.get("flow_action_payload")
             or opts.get("flow_action_payload")
-            or {}
         )
-        if isinstance(payload_raw, dict):
+        if isinstance(payload_raw, str):
+            if payload_raw:
+                flow_parameters["flow_action_payload"] = payload_raw
+        elif isinstance(payload_raw, dict):
             payload = {}
             screen_value = payload_raw.get("screen")
             if isinstance(screen_value, str):
@@ -180,7 +182,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
             if screen_value:
                 payload["screen"] = screen_value
             data_value = payload_raw.get("data")
-            if data_value not in (None, ""):
+            if data_value not in (None, "", {}, []):
                 payload["data"] = data_value
             if payload:
                 flow_parameters["flow_action_payload"] = payload
