@@ -1,7 +1,6 @@
 import os
 import uuid
 import json
-from collections import Counter
 from flask import Blueprint, render_template, request, redirect, session, url_for, jsonify
 from werkzeug.utils import secure_filename
 from config import Config
@@ -141,79 +140,44 @@ def respuestas():
         c.execute("SELECT DISTINCT numero FROM mensajes")
     numeros = [row[0] for row in c.fetchall()]
 
-    data_by_numero = {}
-    steps_set = set()
+    flow_responses = []
 
-    if numeros:
-        formato = ','.join(['%s'] * len(numeros))
-
+    if rol == 'admin':
         c.execute(
-            f"""
-            SELECT numero, step, GROUP_CONCAT(mensaje ORDER BY timestamp SEPARATOR ' | ')
-              FROM mensajes
-             WHERE numero IN ({formato}) AND tipo NOT LIKE 'bot%%' AND step IS NOT NULL
-             GROUP BY numero, step
-            """,
-            numeros,
-        )
-        user_rows = c.fetchall()
-        user_map = {(n, s): msg for n, s, msg in user_rows}
-
-        c.execute(
-            f"""
-            SELECT m.numero, m.timestamp, m.mensaje, m.tipo,
-                   r.step, r.siguiente_step, m.regla_id, r.id
+            """
+            SELECT m.numero, m.mensaje, m.timestamp
               FROM mensajes m
-              JOIN reglas r ON m.regla_id = r.id
-             WHERE m.numero IN ({formato}) AND m.tipo LIKE 'bot%%'
-             ORDER BY m.numero, r.id
-            """,
-            numeros,
+             WHERE m.tipo LIKE 'bot%%'
+             ORDER BY m.timestamp DESC
+            """
         )
         rows = c.fetchall()
+    elif role_id and numeros:
+        c.execute(
+            """
+            SELECT m.numero, m.mensaje, m.timestamp
+              FROM mensajes m
+              JOIN chat_roles cr ON m.numero = cr.numero
+             WHERE cr.role_id = %s AND m.tipo LIKE 'bot%%'
+             ORDER BY m.timestamp DESC
+            """,
+            (role_id,),
+        )
+        rows = c.fetchall()
+    else:
+        rows = []
 
-        for row in rows:
-            numero, timestamp, mensaje, tipo, step, siguiente, regla_id, regla_id_join = row
-            base = data_by_numero.setdefault(
-                numero,
-                {
-                    'numero': numero,
-                    'fecha': timestamp,
-                    'mensaje': mensaje,
-                    'tipo': tipo,
-                },
-            )
-            chain = []
-            if regla_id_join:
-                chain.append((regla_id_join, step))
-            if siguiente:
-                for s in siguiente.split(','):
-                    s = s.strip()
-                    if not s:
-                        continue
-                    if not s.isdigit():
-                        continue  # o registrar un warning
-                    chain.append((int(s), s))
-            for rid, st in chain:
-                key = f'step{rid}'
-                base[key] = st
-                base[f'respuesta_{key}'] = user_map.get((numero, st))
-                steps_set.add(key)
-    conversaciones = list(data_by_numero.values())
+    for numero, mensaje, timestamp in rows:
+        flow_responses.append(
+            {
+                'numero': numero,
+                'mensaje': mensaje,
+                'timestamp': timestamp,
+            }
+        )
 
-    step_counter = Counter(
-        step
-        for r in conversaciones
-        for key, step in r.items()
-        if key.startswith('step')
-    )
-    summary = dict(step_counter)
-
-    steps = sorted(steps_set, key=lambda x: int(x[4:]))
     conn.close()
-    return render_template(
-        'respuestas.html', conversaciones=conversaciones, steps=steps, summary=summary
-    )
+    return render_template('respuestas.html', flow_responses=flow_responses)
 
 @chat_bp.route('/send_message', methods=['POST'])
 def send_message():

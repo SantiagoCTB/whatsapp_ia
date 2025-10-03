@@ -9,43 +9,26 @@
 </div>
 
 <h2>Respuestas</h2>
-{% if summary %}
-<h3>Resumen</h3>
-<table class="summary-table">
-    <tr>
-        <th>Regla/Step</th>
-        <th>Cantidad</th>
-    </tr>
-    {% for step, count in summary.items() %}
-    <tr>
-        <td>{{ step }}</td>
-        <td>{{ count }}</td>
-    </tr>
-    {% endfor %}
-</table>
-{% endif %}
+{% if flow_responses %}
 <table class="fixed-table">
-    <tr>
-        <th>Numero</th>
-        <th>Fecha</th>
-        <th>Mensaje</th>
-        <th>Tipo</th>
-        {% for step in steps %}
-        <th>{{ step|capitalize }}</th>
-        <th>Respuesta usuario {{ step }}</th>
+    <thead>
+        <tr>
+            <th>Número</th>
+            <th>Fecha</th>
+            <th>Respuesta del flow</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for response in flow_responses %}
+        <tr>
+            <td>{{ response.numero }}</td>
+            <td>{{ response.timestamp }}</td>
+            <td>{{ response.mensaje }}</td>
+        </tr>
         {% endfor %}
-    </tr>
-    {% for r in conversaciones %}
-    <tr>
-        <td>{{ r.numero }}</td>
-        <td>{{ r.fecha }}</td>
-        <td>{{ r.mensaje }}</td>
-        <td>{{ r.tipo }}</td>
-        {% for step in steps %}
-        <td>{{ r.get(step, '-') }}</td>
-        <td>{{ r.get('respuesta_' ~ step, '-') }}</td>
-        {% endfor %}
-    </tr>
-    {% endfor %}
+    </tbody>
 </table>
+{% else %}
+<p>No hay respuestas de flows disponibles.</p>
+{% endif %}
 {% endblock %}
