@@ -1,6 +1,7 @@
 import os
 import uuid
 import json
+from collections import defaultdict
 from flask import Blueprint, render_template, request, redirect, session, url_for, jsonify
 from werkzeug.utils import secure_filename
 from config import Config
@@ -140,8 +141,6 @@ def respuestas():
         c.execute("SELECT DISTINCT numero FROM mensajes")
     numeros = [row[0] for row in c.fetchall()]
 
-    flow_responses = []
-
     if rol == 'admin':
         c.execute(
             """
@@ -167,14 +166,31 @@ def respuestas():
     else:
         rows = []
 
+    grouped_responses = defaultdict(list)
     for numero, mensaje, timestamp in rows:
-        flow_responses.append(
+        grouped_responses[numero].append(
             {
-                'numero': numero,
                 'mensaje': mensaje,
                 'timestamp': timestamp,
             }
         )
+
+    flow_responses = []
+    if grouped_responses:
+        for respuestas in grouped_responses.values():
+            respuestas.sort(key=lambda r: r['timestamp'], reverse=True)
+
+        flow_responses = [
+            {
+                'numero': numero,
+                'respuestas': respuestas,
+            }
+            for numero, respuestas in sorted(
+                grouped_responses.items(),
+                key=lambda item: item[1][0]['timestamp'],
+                reverse=True,
+            )
+        ]
 
     conn.close()
     return render_template('respuestas.html', flow_responses=flow_responses)
