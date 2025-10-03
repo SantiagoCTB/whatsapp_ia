@@ -136,8 +136,15 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
         if header_text == "":
             header_text = None
         footer = opts.get("footer")
-        if isinstance(footer, str):
-            footer = footer.strip() or None
+        if isinstance(footer, dict):
+            footer_text = footer.get("text")
+            footer = str(footer_text).strip() if footer_text is not None else None
+        elif isinstance(footer, str):
+            footer = footer.strip()
+        elif footer is not None:
+            footer = str(footer).strip()
+        if footer == "":
+            footer = None
 
         action_raw = opts.get("action") or {}
         parameters_raw = action_raw.get("parameters") or opts.get("parameters") or {}
