@@ -536,6 +536,22 @@ def webhook():
                         step=step,
                     )
                     update_chat_state(from_number, step, 'sin_respuesta')
+
+                    step_lower = (step or '').strip().lower()
+                    ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
+                    if (
+                        normalized_text
+                        and ai_step
+                        and step_lower == ai_step
+                        and is_ai_enabled()
+                    ):
+                        with cache_lock:
+                            message_buffer.pop(from_number, None)
+                            timer = pending_timers.pop(from_number, None)
+                        if timer:
+                            timer.cancel()
+                        handle_text_message(from_number, normalized_text, save=False)
+                        return jsonify({'status': 'processed_immediate'}), 200
                     with cache_lock:
                         message_buffer.setdefault(from_number, []).append(normalized_text)
                         if from_number in pending_timers:
