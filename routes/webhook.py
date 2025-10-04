@@ -347,8 +347,7 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
             "precio",
             "llevar",
         }
-        tokens = set(text_norm.split())
-        if redirect_step and tokens & keywords:
+        if redirect_step and any(keyword in text_norm for keyword in keywords):
             advance_steps(numero, redirect_step)
             process_step_chain(numero)
             return
