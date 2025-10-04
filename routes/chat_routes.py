@@ -146,7 +146,8 @@ def respuestas():
             """
             SELECT m.numero, m.mensaje, m.timestamp
               FROM mensajes m
-             WHERE m.tipo LIKE 'bot%%'
+              JOIN mensajes bot ON m.reply_to_wa_id = bot.wa_id
+             WHERE m.tipo = 'cliente' AND bot.tipo = 'bot_flow'
              ORDER BY m.timestamp DESC
             """
         )
@@ -156,8 +157,9 @@ def respuestas():
             """
             SELECT m.numero, m.mensaje, m.timestamp
               FROM mensajes m
+              JOIN mensajes bot ON m.reply_to_wa_id = bot.wa_id
               JOIN chat_roles cr ON m.numero = cr.numero
-             WHERE cr.role_id = %s AND m.tipo LIKE 'bot%%'
+             WHERE cr.role_id = %s AND m.tipo = 'cliente' AND bot.tipo = 'bot_flow'
              ORDER BY m.timestamp DESC
             """,
             (role_id,),
