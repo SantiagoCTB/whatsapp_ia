@@ -9,6 +9,28 @@
 </div>
 
 <h2>Respuestas</h2>
+{% macro render_flow_node(node) %}
+    {% if node.type == 'object' %}
+        <ul class="flow-data-list flow-data-object">
+            {% for item in node.items %}
+            <li>
+                <span class="flow-key">{{ item.key }}</span>
+                <div class="flow-value-wrapper">{{ render_flow_node(item.value) }}</div>
+            </li>
+            {% endfor %}
+        </ul>
+    {% elif node.type == 'list' %}
+        <ol class="flow-data-list flow-data-array">
+            {% for item in node.items %}
+            <li>
+                <div class="flow-value-wrapper">{{ render_flow_node(item) }}</div>
+            </li>
+            {% endfor %}
+        </ol>
+    {% else %}
+        <span class="flow-value">{{ node.value if node.value is not none and node.value != '' else '—' }}</span>
+    {% endif %}
+{% endmacro %}
 {% if flow_responses %}
 <table class="fixed-table">
     <thead>
@@ -24,9 +46,25 @@
             <td>
                 <ul class="flow-responses-list">
                     {% for resp in response.respuestas %}
-                    <li>
-                        <span class="flow-response-timestamp">{{ resp.timestamp }}</span>
-                        <div class="flow-response-message">{{ resp.mensaje }}</div>
+                    <li class="flow-response-item">
+                        <div class="flow-response-header">
+                            <span class="flow-response-timestamp">{{ resp.timestamp }}</span>
+                        </div>
+                        <div class="flow-response-body">
+                            {% if resp.segments %}
+                            <div class="flow-response-card">
+                                {% for segment in resp.segments %}
+                                    {% if segment.kind == 'text' %}
+                                        <p class="flow-text">{{ segment.content }}</p>
+                                    {% elif segment.kind == 'data' %}
+                                        {{ render_flow_node(segment.content) }}
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <div class="flow-response-message">{{ resp.mensaje }}</div>
+                            {% endif %}
+                        </div>
                     </li>
                     {% endfor %}
                 </ul>

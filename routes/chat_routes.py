@@ -115,6 +115,53 @@ def get_chat(numero):
     return jsonify({'mensajes': [list(m) for m in mensajes]})
 
 
+def _normalize_flow_node(value):
+    """Normaliza un valor de Flow a una estructura anidada para plantillas."""
+    if isinstance(value, dict):
+        return {
+            'type': 'object',
+            'items': [
+                {'key': key, 'value': _normalize_flow_node(val)}
+                for key, val in value.items()
+            ],
+        }
+    if isinstance(value, list):
+        return {
+            'type': 'list',
+            'items': [_normalize_flow_node(item) for item in value],
+        }
+    return {
+        'type': 'value',
+        'value': value,
+    }
+
+
+def _parse_flow_segments(raw_message):
+    """Convierte el texto plano almacenado para una respuesta de Flow en segmentos."""
+    if not raw_message:
+        return []
+
+    segments = []
+    for line in raw_message.splitlines():
+        trimmed = line.strip()
+        if not trimmed:
+            continue
+
+        parsed = None
+        if trimmed.startswith('{') or trimmed.startswith('['):
+            try:
+                parsed = json.loads(trimmed)
+            except json.JSONDecodeError:
+                parsed = None
+
+        if parsed is None:
+            segments.append({'kind': 'text', 'content': trimmed})
+        else:
+            segments.append({'kind': 'data', 'content': _normalize_flow_node(parsed)})
+
+    return segments
+
+
 @chat_bp.route('/respuestas')
 def respuestas():
     if "user" not in session:
@@ -174,6 +221,7 @@ def respuestas():
             {
                 'mensaje': mensaje,
                 'timestamp': timestamp,
+                'segments': _parse_flow_segments(mensaje),
             }
         )
 

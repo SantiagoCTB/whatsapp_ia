@@ -83,6 +83,100 @@
         const lastChatTimestamps = {};
         const roleIcons = { ventas: '💼', soporte: '🛠', marketing: '📣' };
 
+        function normalizeFlowNode(value) {
+          if (Array.isArray(value)) {
+            return { type: 'list', items: value.map(normalizeFlowNode) };
+          }
+          if (value && typeof value === 'object') {
+            return {
+              type: 'object',
+              items: Object.entries(value).map(([key, val]) => ({
+                key,
+                value: normalizeFlowNode(val)
+              }))
+            };
+          }
+          return { type: 'value', value };
+        }
+
+        function buildFlowSegments(rawText) {
+          if (!rawText) return [];
+          const lines = rawText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+          if (!lines.length) return [];
+          const segments = [];
+          lines.forEach(line => {
+            let parsed = null;
+            if (line.startsWith('{') || line.startsWith('[')) {
+              try {
+                parsed = JSON.parse(line);
+              } catch (err) {
+                parsed = null;
+              }
+            }
+            if (parsed === null) {
+              segments.push({ kind: 'text', content: line });
+            } else {
+              segments.push({ kind: 'data', content: normalizeFlowNode(parsed) });
+            }
+          });
+          return segments;
+        }
+
+        function renderFlowNode(node) {
+          if (node.type === 'object') {
+            const list = document.createElement('ul');
+            list.className = 'flow-data-list flow-data-object';
+            node.items.forEach(item => {
+              const li = document.createElement('li');
+              const label = document.createElement('span');
+              label.className = 'flow-key';
+              label.textContent = item.key;
+              li.appendChild(label);
+              const wrapper = document.createElement('div');
+              wrapper.className = 'flow-value-wrapper';
+              wrapper.appendChild(renderFlowNode(item.value));
+              li.appendChild(wrapper);
+              list.appendChild(li);
+            });
+            return list;
+          }
+          if (node.type === 'list') {
+            const list = document.createElement('ol');
+            list.className = 'flow-data-list flow-data-array';
+            node.items.forEach(item => {
+              const li = document.createElement('li');
+              const wrapper = document.createElement('div');
+              wrapper.className = 'flow-value-wrapper';
+              wrapper.appendChild(renderFlowNode(item));
+              li.appendChild(wrapper);
+              list.appendChild(li);
+            });
+            return list;
+          }
+          const span = document.createElement('span');
+          span.className = 'flow-value';
+          const value = node.value;
+          span.textContent = value === null || value === undefined || value === '' ? '—' : String(value);
+          return span;
+        }
+
+        function renderFlowSegments(segments) {
+          if (!segments.length) return null;
+          const container = document.createElement('div');
+          container.className = 'flow-response-card';
+          segments.forEach(segment => {
+            if (segment.kind === 'text') {
+              const p = document.createElement('p');
+              p.className = 'flow-text';
+              p.textContent = segment.content;
+              container.appendChild(p);
+            } else if (segment.kind === 'data') {
+              container.appendChild(renderFlowNode(segment.content));
+            }
+          });
+          return container;
+        }
+
         function playAlertSound() {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const oscillator = ctx.createOscillator();
@@ -311,7 +405,16 @@
               }
 
               // texto (caption o mensajes)
-              if (txt) {
+              let flowSegments = [];
+              if (tipo === 'cliente' && replyTipo === 'bot_flow') {
+                flowSegments = buildFlowSegments(txt);
+              }
+
+              if (flowSegments.length) {
+                div.classList.add('flow-message');
+                const flowCard = renderFlowSegments(flowSegments);
+                if (flowCard) div.appendChild(flowCard);
+              } else if (txt) {
                 const p = document.createElement('p');
                 p.textContent = txt;
                 div.appendChild(p);
