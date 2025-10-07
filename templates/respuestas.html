@@ -10,25 +10,25 @@
 
 <h2>Respuestas</h2>
 {% macro render_flow_node(node) %}
-    {% if node.type == 'object' %}
+    {% if node['type'] == 'object' %}
         <ul class="flow-data-list flow-data-object">
-            {% for item in node.items %}
+            {% for item in node['items'] %}
             <li>
-                <span class="flow-key">{{ item.key }}</span>
-                <div class="flow-value-wrapper">{{ render_flow_node(item.value) }}</div>
+                <span class="flow-key">{{ item['key'] }}</span>
+                <div class="flow-value-wrapper">{{ render_flow_node(item['value']) }}</div>
             </li>
             {% endfor %}
         </ul>
-    {% elif node.type == 'list' %}
+    {% elif node['type'] == 'list' %}
         <ol class="flow-data-list flow-data-array">
-            {% for item in node.items %}
+            {% for item in node['items'] %}
             <li>
                 <div class="flow-value-wrapper">{{ render_flow_node(item) }}</div>
             </li>
             {% endfor %}
         </ol>
     {% else %}
-        <span class="flow-value">{{ node.value if node.value is not none and node.value != '' else '—' }}</span>
+        <span class="flow-value">{{ node['value'] if node['value'] is not none and node['value'] != '' else '—' }}</span>
     {% endif %}
 {% endmacro %}
 {% if flow_responses %}
