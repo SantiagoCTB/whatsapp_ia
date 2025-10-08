@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify, url_for
 from datetime import datetime
 from config import Config
 from services.db import (
+    AI_BLOCKED_STATE,
     get_connection,
     guardar_mensaje,
     get_chat_state,
@@ -23,6 +24,7 @@ webhook_bp = Blueprint('webhook', __name__)
 VERIFY_TOKEN    = Config.VERIFY_TOKEN
 SESSION_TIMEOUT = Config.SESSION_TIMEOUT
 DEFAULT_FALLBACK_TEXT = "No entendí tu respuesta, intenta de nuevo."
+AI_PENDING_STATE = 'ia_pendiente'
 
 # Mapa numero -> lista de textos recibidos para procesar tras un delay
 message_buffer     = {}
@@ -49,6 +51,12 @@ def register_external(name):
 
 def set_user_step(numero, step, estado='espera_usuario'):
     """Actualiza el paso en la tabla chat_state."""
+    if estado == 'espera_usuario':
+        row = get_chat_state(numero)
+        if row and len(row) > 1:
+            current_state = (row[1] or '').strip().lower()
+            if current_state == AI_BLOCKED_STATE:
+                estado = AI_BLOCKED_STATE
     update_chat_state(numero, step, estado)
 
 
@@ -316,7 +324,8 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
     now = datetime.now()
     row = get_chat_state(numero)
     step_db = row[0] if row else None
-    last_time = row[1] if row else None
+    estado_db = row[1] if row and len(row) > 1 else None
+    last_time = row[2] if row and len(row) > 2 else None
     if last_time and (now - last_time).total_seconds() > SESSION_TIMEOUT:
         delete_chat_state(numero)
         step_db = None
@@ -334,8 +343,14 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
     text_norm = normalize_text(texto or "")
 
     step_lower = (step_db or '').strip().lower()
+    estado_lower = (estado_db or '').strip().lower()
     ai_step = (Config.AI_HANDOFF_STEP or '').strip().lower()
-    if ai_step and step_lower == ai_step and is_ai_enabled():
+    if (
+        ai_step
+        and step_lower == ai_step
+        and is_ai_enabled()
+        and estado_lower != AI_BLOCKED_STATE
+    ):
         redirect_step = (Config.AI_KEYWORD_REDIRECT_STEP or '').strip().lower()
         keywords = {
             "domicilio",
@@ -349,9 +364,10 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
         }
         if redirect_step and any(keyword in text_norm for keyword in keywords):
             advance_steps(numero, redirect_step)
+            update_chat_state(numero, redirect_step, AI_BLOCKED_STATE)
             process_step_chain(numero)
             return
-        update_chat_state(numero, step_db, 'ia_pendiente')
+        update_chat_state(numero, step_db, AI_PENDING_STATE)
         return
 
     if handle_global_command(numero, texto):

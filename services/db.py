@@ -7,6 +7,8 @@ from werkzeug.security import generate_password_hash
 from config import Config
 from services.normalize_text import normalize_text
 
+AI_BLOCKED_STATE = 'ia_bloqueada'
+
 def get_connection():
     return mysql.connector.connect(
         host=Config.DB_HOST,
@@ -426,11 +428,11 @@ def update_mensaje_texto(id_mensaje, texto):
 
 
 def get_chat_state(numero):
-    """Obtiene el step y last_activity almacenados para un número."""
+    """Obtiene el step, estado y last_activity almacenados para un número."""
     conn = get_connection()
     c    = conn.cursor()
     c.execute(
-        "SELECT step, last_activity FROM chat_state WHERE numero=%s",
+        "SELECT step, estado, last_activity FROM chat_state WHERE numero=%s",
         (numero,),
     )
     row = c.fetchone()
@@ -442,6 +444,11 @@ def update_chat_state(numero, step, estado=None):
     """Inserta o actualiza el estado del chat y la última actividad."""
     conn = get_connection()
     c    = conn.cursor()
+    if estado is not None:
+        c.execute("SELECT estado FROM chat_state WHERE numero=%s", (numero,))
+        row = c.fetchone()
+        if row and (row[0] or '').strip().lower() == AI_BLOCKED_STATE and (estado or '').strip().lower() != AI_BLOCKED_STATE:
+            estado = row[0]
     c.execute(
         "INSERT INTO chat_state (numero, step, estado, last_activity) VALUES (%s, %s, %s, NOW()) "
         "ON DUPLICATE KEY UPDATE step=VALUES(step), estado=COALESCE(VALUES(estado), estado), last_activity=VALUES(last_activity)",
@@ -805,6 +812,7 @@ def get_messages_for_ai(after_id, handoff_step, limit):
            AND TRIM(COALESCE(m.mensaje, '')) <> ''
            AND LOWER(COALESCE(cs.step, '')) = %s
            AND LOWER(COALESCE(m.step, '')) = %s
+           AND LOWER(COALESCE(cs.estado, '')) <> 'ia_bloqueada'
          ORDER BY m.id ASC
          LIMIT %s
         """,
