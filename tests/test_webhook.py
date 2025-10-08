@@ -17,7 +17,7 @@ def test_handle_text_message_keyword_redirect(monkeypatch):
     monkeypatch.setattr(webhook.Config, "AI_HANDOFF_STEP", "ia_chat")
     monkeypatch.setattr(webhook.Config, "AI_KEYWORD_REDIRECT_STEP", redirect_step)
 
-    monkeypatch.setattr(webhook, "get_chat_state", lambda _n: ("ia_chat", datetime.now()))
+    monkeypatch.setattr(webhook, "get_chat_state", lambda _n: ("ia_chat", "ia_activa", datetime.now()))
     monkeypatch.setattr(webhook, "delete_chat_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(webhook, "guardar_mensaje", lambda *args, **kwargs: None)
     monkeypatch.setattr(webhook, "handle_global_command", lambda *args, **kwargs: False)
@@ -48,7 +48,8 @@ def test_handle_text_message_keyword_redirect(monkeypatch):
 
     assert advance_calls == [(numero, redirect_step)]
     assert process_calls == [(numero, None)]
-    assert all(call[2] != "ia_pendiente" for call in update_calls)
+    assert any(call[2] == webhook.AI_BLOCKED_STATE for call in update_calls)
+    assert all(call[2] != webhook.AI_PENDING_STATE for call in update_calls)
 
 
 def test_webhook_keyword_short_circuit(monkeypatch):
@@ -85,7 +86,7 @@ def test_webhook_keyword_short_circuit(monkeypatch):
     monkeypatch.setattr(
         webhook,
         "get_chat_state",
-        lambda _n: (webhook.Config.AI_HANDOFF_STEP, datetime.now()),
+        lambda _n: (webhook.Config.AI_HANDOFF_STEP, None, datetime.now()),
     )
 
     update_calls = []
