@@ -912,10 +912,10 @@ class CatalogResponder:
         context = "\n\n".join(context_parts)
         return (
             "Actúas como asesor comercial. Usa únicamente el catálogo proporcionado para responder.\n"
-            "Entrega la respuesta en español neutro, proponiendo opciones de productos y una breve invitación a continuar la compra.\n"
+            "Entrega la respuesta en español neutro y servicial, proponiendo opciones de productos.\n"
             "Responde en un único mensaje con frases muy concretas (máximo "
             f"{max(Config.AI_RESPONSE_MAX_SENTENCES, 1)} oraciones cortas). Evita listas extensas y despedidas largas.\n"
-            "Si el dato no aparece, informa que no está en el catálogo.\n\n"
+            "Si el dato no aparece, informa que miraremos si existe.\n\n"
             f"Pregunta del cliente: {question}\n\n"
             f"Catálogo disponible:\n{context}"
         )
