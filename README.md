@@ -119,6 +119,23 @@ En macOS puedes usar Homebrew (`brew install tesseract tesseract-lang`), y en Wi
 
 > ℹ️ Si ejecutas la aplicación con Docker (incluyendo Docker Desktop en Windows/macOS), la imagen definida en `Dockerfile` ya instala `tesseract-ocr`, el paquete de idioma en español y dependencias como `ffmpeg`, por lo que no necesitas preparar el host manualmente para procesar catálogos PDF.
 
+### Activar el OCR para texto incrustado en imágenes
+
+1. **Instala Tesseract y los paquetes de idioma que necesites** en el host donde se ejecutará la aplicación. En Docker basta con reconstruir la imagen del proyecto porque el `Dockerfile` ya incluye `tesseract-ocr` y `tesseract-ocr-spa`; si necesitas otros idiomas agrégalos al bloque `apt-get install` antes de hacer `docker compose build`.
+2. **Configura las variables de entorno en `.env`**:
+   ```ini
+   AI_OCR_ENABLED=1              # Deja `1` para que el pipeline intente OCR cuando falte texto embebido
+   AI_OCR_LANG=spa+eng           # Ajusta los códigos a los idiomas realmente instalados en Tesseract
+   AI_OCR_TESSERACT_ENABLED=1    # Habilita Tesseract como motor principal
+   AI_OCR_EASYOCR_ENABLED=1      # Mantén EasyOCR como respaldo si Tesseract no está disponible
+   # AI_OCR_EASYOCR_DOWNLOAD_ENABLED=1  # Úsalo solo si permites que EasyOCR descargue modelos en caliente
+   ```
+   Si Tesseract solo tiene un idioma (por ejemplo `eng`), actualiza `AI_OCR_LANG` para que coincida y evita errores de carga.
+3. **Reinicia la aplicación** (o recrea el contenedor) para que tome la nueva configuración. En Docker puedes ejecutar `docker compose up --build` tras cambiar el `.env`.
+4. **Vuelve a subir el catálogo** desde la sección de configuración. Durante la ingesta, el sistema rasteriza cada página y ejecuta OCR automáticamente cuando detecta que el PDF no trae texto embebido.【F:services/ai_responder.py†L630-L707】
+
+> 📌 Puedes revisar los logs de la aplicación para confirmar que el OCR se ejecutó: verás advertencias si falta algún paquete de idioma o si Tesseract/EasyOCR no están disponibles.【F:services/ai_responder.py†L117-L223】【F:services/ai_responder.py†L630-L707】
+
 ## Instalación local
 ```bash
 python -m venv .venv

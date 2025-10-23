@@ -65,6 +65,7 @@ class CatalogResponder:
         self._cache_ttl = Config.AI_CACHE_TTL
         self._last_mtime: float = 0.0
         self._tesseract_ready: Optional[bool] = None
+        self._tesseract_lang_arg: Optional[str] = None
         self._easyocr_reader: Optional[object] = None
         self._easyocr_failed = False
 
@@ -117,11 +118,13 @@ class CatalogResponder:
 
         if pytesseract is None:
             self._tesseract_ready = False
+            self._tesseract_lang_arg = None
             return False
 
         try:
             pytesseract.get_tesseract_version()
             required_langs = self._resolve_tesseract_langs()
+            self._tesseract_lang_arg = "+".join(required_langs) if required_langs else None
             available_langs: Optional[List[str]] = None
             if hasattr(pytesseract, "get_languages"):
                 try:
@@ -133,18 +136,34 @@ class CatalogResponder:
                         exc_info=True,
                     )
             if available_langs is not None:
-                missing = [lang for lang in required_langs if lang not in set(available_langs or [])]
-                if missing:
+                available_set = set(available_langs or [])
+                present = [lang for lang in required_langs if lang in available_set]
+                missing = [lang for lang in required_langs if lang not in available_set]
+                if missing and present:
                     logging.warning(
-                        "Tesseract está instalado pero faltan los paquetes de idioma requeridos: %s",
+                        "Tesseract está instalado pero faltan los paquetes de idioma requeridos: %s. "
+                        "Se utilizarán únicamente los disponibles: %s.",
+                        ", ".join(missing),
+                        ", ".join(present),
+                    )
+                    self._tesseract_lang_arg = "+".join(present) if present else None
+                elif missing and not present:
+                    logging.warning(
+                        "Tesseract está instalado pero no cuenta con los idiomas solicitados (%s). "
+                        "Se usará el idioma predeterminado del sistema.",
                         ", ".join(missing),
                     )
-                    self._tesseract_ready = False
-                    return False
+                    self._tesseract_lang_arg = None
             else:
-                logging.info(
-                    "No fue posible validar los idiomas de Tesseract; se continuará con la configuración declarada."
-                )
+                if self._tesseract_lang_arg:
+                    logging.info(
+                        "No fue posible validar los idiomas de Tesseract; se continuará con la configuración declarada (%s).",
+                        self._tesseract_lang_arg,
+                    )
+                else:
+                    logging.info(
+                        "No fue posible validar los idiomas de Tesseract; se utilizará el idioma predeterminado del sistema."
+                    )
         except Exception as exc:
             tesseract_mod = getattr(pytesseract, "pytesseract", None)
             not_found_exc = getattr(tesseract_mod, "TesseractNotFoundError", None) if tesseract_mod else None
@@ -153,10 +172,17 @@ class CatalogResponder:
             else:
                 logging.warning("No se pudo comprobar la instalación de Tesseract", exc_info=True)
             self._tesseract_ready = False
+            self._tesseract_lang_arg = None
             return False
 
         self._tesseract_ready = True
         return True
+
+    def _get_tesseract_lang_argument(self) -> Optional[str]:
+        if self._tesseract_lang_arg:
+            return self._tesseract_lang_arg
+        raw = (Config.AI_OCR_LANG or "").strip()
+        return raw or None
 
     def _ensure_easyocr_reader(self):
         if not Config.AI_OCR_ENABLED or not Config.AI_OCR_EASYOCR_ENABLED:
@@ -607,15 +633,17 @@ class CatalogResponder:
         local_error: Optional[str] = None
 
         tess_kwargs: Dict[str, object] = {}
-        lang = (Config.AI_OCR_LANG or "").strip()
-        if lang:
-            tess_kwargs["lang"] = lang
         if Config.AI_OCR_TESSERACT_CONFIG:
             tess_kwargs["config"] = Config.AI_OCR_TESSERACT_CONFIG
 
         if Config.AI_OCR_TESSERACT_ENABLED and pytesseract is not None:
             if self._ensure_tesseract_available():
                 backends_available = True
+                lang_arg = self._get_tesseract_lang_argument()
+                if lang_arg:
+                    tess_kwargs["lang"] = lang_arg
+                else:
+                    tess_kwargs.pop("lang", None)
                 try:
                     text = pytesseract.image_to_string(pil_image, **tess_kwargs)
                     if text and text.strip():
@@ -630,17 +658,19 @@ class CatalogResponder:
                         logging.warning("Tesseract no está instalado en el sistema.")
                         local_error = "tesseract_missing"
                         self._tesseract_ready = False
+                        self._tesseract_lang_arg = None
                     elif (
-                        lang
+                        lang_arg
                         and "Failed loading language" in str(exc)
                         and tesseract_mod
                         and hasattr(tesseract_mod, "TesseractError")
                     ):
                         logging.warning(
                             "No se encontró el paquete de idioma '%s' para Tesseract, se usará el idioma por defecto.",
-                            lang,
+                            lang_arg,
                         )
                         tess_kwargs.pop("lang", None)
+                        lang_arg = None
                         try:
                             text = pytesseract.image_to_string(pil_image, **tess_kwargs)
                             if text and text.strip():
