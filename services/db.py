@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Sequence, Set, Tuple
 
 import mysql.connector
 from werkzeug.security import generate_password_hash
@@ -8,6 +8,55 @@ from config import Config
 from services.normalize_text import normalize_text
 
 AI_BLOCKED_STATE = 'ia_bloqueada'
+
+
+def get_step_triggers(step_names: Sequence[str]) -> Set[str]:
+    """Obtiene y normaliza los disparadores configurados para pasos dados.
+
+    Parameters
+    ----------
+    step_names: Sequence[str]
+        Nombres de pasos a consultar.
+
+    Returns
+    -------
+    Set[str]
+        Conjunto de disparadores normalizados configurados en ``reglas``.
+    """
+
+    normalized_steps = [
+        (step or "").strip().lower()
+        for step in step_names
+        if (step or "").strip()
+    ]
+    if not normalized_steps:
+        return set()
+
+    placeholders = ",".join(["%s"] * len(normalized_steps))
+    query = f"""
+        SELECT input_text
+          FROM reglas
+         WHERE LOWER(step) IN ({placeholders})
+    """
+
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(query, tuple(normalized_steps))
+    rows = c.fetchall()
+    conn.close()
+
+    triggers: Set[str] = set()
+    for (input_text,) in rows or []:
+        parts = re.split(r"[,\n]+", input_text or "")
+        for raw_trigger in parts:
+            trigger = (raw_trigger or "").strip()
+            if not trigger or trigger == "*":
+                continue
+            normalized = normalize_text(trigger)
+            if normalized:
+                triggers.add(normalized)
+
+    return triggers
 
 def get_connection():
     return mysql.connector.connect(

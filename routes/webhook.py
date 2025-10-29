@@ -13,6 +13,7 @@ from services.db import (
     update_chat_state,
     delete_chat_state,
     is_ai_enabled,
+    get_step_triggers,
 )
 from services.whatsapp_api import download_audio, get_media_url, enviar_mensaje
 from services.job_queue import enqueue_transcription
@@ -351,18 +352,12 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
         and is_ai_enabled()
         and estado_lower != AI_BLOCKED_STATE
     ):
-        redirect_step = (Config.AI_KEYWORD_REDIRECT_STEP or '').strip().lower()
-        keywords = {
-            "domicilio",
-            "comprar",
-            "pedido",
-            "entrega",
-            "envio",
-            "pagar",
-            "precio",
-            "llevar",
-        }
-        if redirect_step and any(keyword in text_norm for keyword in keywords):
+        redirect_step_raw = (Config.AI_KEYWORD_REDIRECT_STEP or '').strip()
+        redirect_step = redirect_step_raw.lower()
+        step_candidates = [s.strip() for s in redirect_step.split(',') if s.strip()]
+        triggers = get_step_triggers(step_candidates) if step_candidates else set()
+
+        if redirect_step and triggers and any(trigger in text_norm for trigger in triggers):
             advance_steps(numero, redirect_step)
             update_chat_state(numero, redirect_step, AI_BLOCKED_STATE)
             process_step_chain(numero)
