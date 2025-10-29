@@ -231,7 +231,7 @@ def process_step_chain(numero, text_norm=None):
     if text_norm is None and not comodines:
         return
 
-    # Coincidencia exacta
+    # Coincidencia por palabras/frases completas
     for r in reglas:
         patt = (r[7] or '').strip()
         if not patt or patt == '*':
@@ -241,9 +241,13 @@ def process_step_chain(numero, text_norm=None):
             for part in re.split(r'[,\n]+', patt)
             if part and part.strip()
         ]
-        if any(trigger == text_norm for trigger in subtriggers):
-            dispatch_rule(numero, r, step)
-            return
+        for trigger in subtriggers:
+            if not trigger:
+                continue
+            pattern = r"(?<!\S)" + re.escape(trigger) + r"(?!\S)"
+            if text_norm and re.search(pattern, text_norm):
+                dispatch_rule(numero, r, step)
+                return
 
     # Regla comodín
     if comodines:
