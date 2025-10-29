@@ -10,6 +10,49 @@ from routes import webhook
 from services import ai_worker
 
 
+def test_process_step_chain_multiple_triggers(monkeypatch):
+    numero = "5212345"
+    step = "consulta_envio"
+    regla = (1, "Tenemos servicio de envío disponible", None, "text", None, None, None, "domicilio,envío")
+
+    class DummyCursor:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def execute(self, *args, **kwargs):
+            return None
+
+        def fetchall(self):
+            return self._rows
+
+    class DummyConnection:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def cursor(self):
+            return DummyCursor(self._rows)
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(webhook, "get_current_step", lambda _n: step)
+    monkeypatch.setattr(webhook, "get_connection", lambda: DummyConnection([regla]))
+
+    dispatched = []
+
+    def fake_dispatch(numero_arg, regla_arg, step_arg=None):
+        dispatched.append((numero_arg, regla_arg, step_arg))
+
+    monkeypatch.setattr(webhook, "dispatch_rule", fake_dispatch)
+
+    webhook.process_step_chain(numero, text_norm=webhook.normalize_text("domicilio"))
+    assert dispatched == [(numero, regla, step)]
+
+    dispatched.clear()
+    webhook.process_step_chain(numero, text_norm=webhook.normalize_text("envío"))
+    assert dispatched == [(numero, regla, step)]
+
+
 def test_handle_text_message_keyword_redirect(monkeypatch):
     numero = "12345"
     redirect_step = "flujo_compra"

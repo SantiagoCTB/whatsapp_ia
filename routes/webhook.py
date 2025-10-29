@@ -2,6 +2,7 @@ import os
 import logging
 import threading
 import json
+import re
 from flask import Blueprint, request, jsonify, url_for
 from datetime import datetime
 from config import Config
@@ -233,7 +234,14 @@ def process_step_chain(numero, text_norm=None):
     # Coincidencia exacta
     for r in reglas:
         patt = (r[7] or '').strip()
-        if patt and patt != '*' and normalize_text(patt) == text_norm:
+        if not patt or patt == '*':
+            continue
+        subtriggers = [
+            normalize_text(part)
+            for part in re.split(r'[,\n]+', patt)
+            if part and part.strip()
+        ]
+        if any(trigger == text_norm for trigger in subtriggers):
             dispatch_rule(numero, r, step)
             return
 
