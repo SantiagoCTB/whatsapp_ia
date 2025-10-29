@@ -10,6 +10,7 @@ from services.db import (
     get_catalog_media_keywords,
     get_ai_settings,
     get_messages_for_ai,
+    get_recent_messages_for_context,
     update_chat_state,
 )
 from services.whatsapp_api import enviar_mensaje
@@ -70,8 +71,39 @@ class AIWorker(threading.Thread):
 
                     last_id = message_id
 
+                    history_limit = max(getattr(Config, "AI_HISTORY_MESSAGE_LIMIT", 0), 0)
+                    history_records = []
+                    if history_limit:
+                        try:
+                            history_records = get_recent_messages_for_context(
+                                numero,
+                                message_id,
+                                history_limit,
+                            )
+                        except Exception:
+                            logging.warning(
+                                "No se pudo recuperar el historial para %s", numero, exc_info=True
+                            )
+                            history_records = []
+
+                    history_payload: List[Dict[str, str]] = []
+                    for item in history_records:
+                        role_raw = str(item.get("tipo") or "").strip().lower()
+                        if role_raw == "bot":
+                            role = "assistant"
+                        else:
+                            role = "user"
+                        content = (item.get("mensaje") or "").strip()
+                        if not content:
+                            continue
+                        history_payload.append({"role": role, "content": content})
+
                     try:
-                        answer, references = responder.answer(numero, texto)
+                        answer, references = responder.answer(
+                            numero,
+                            texto,
+                            history=history_payload,
+                        )
                     except Exception:
                         logging.exception("Error generando respuesta IA para %s", numero)
                         continue
