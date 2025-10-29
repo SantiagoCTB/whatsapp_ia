@@ -872,6 +872,36 @@ def get_messages_for_ai(after_id, handoff_step, limit):
     return rows or []
 
 
+def get_recent_messages_for_context(numero: str, before_id: int, limit: int) -> List[Dict[str, object]]:
+    """Obtiene el historial reciente de mensajes útiles para contexto conversacional."""
+
+    if not numero or limit <= 0:
+        return []
+
+    sanitized_before = before_id if isinstance(before_id, int) and before_id > 0 else 0
+
+    conn = get_connection()
+    c = conn.cursor(dictionary=True)
+    c.execute(
+        """
+        SELECT id, mensaje, tipo
+          FROM mensajes
+         WHERE numero = %s
+           AND (%s = 0 OR id < %s)
+           AND LOWER(COALESCE(tipo, '')) IN ('cliente', 'bot')
+           AND TRIM(COALESCE(mensaje, '')) <> ''
+         ORDER BY id DESC
+         LIMIT %s
+        """,
+        (numero, sanitized_before, sanitized_before, limit),
+    )
+    rows = c.fetchall() or []
+    conn.close()
+
+    rows.reverse()
+    return rows
+
+
 def get_catalog_media_keywords() -> List[Dict[str, object]]:
     """Obtiene disparadores de reglas con medios catalogados.
 
