@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -6,6 +7,26 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int = 0, min_value: Optional[int] = None) -> int:
+    value = os.getenv(name)
+    if value is None:
+        result = default
+    else:
+        raw = value.strip()
+        if not raw:
+            result = default
+        else:
+            try:
+                result = int(raw)
+            except ValueError:
+                result = default
+
+    if min_value is not None:
+        result = max(result, min_value)
+
+    return result
 
 
 class Config:
@@ -42,6 +63,7 @@ class Config:
     AI_POLL_INTERVAL = float(os.getenv('AI_POLL_INTERVAL', 3))
     AI_BATCH_SIZE    = int(os.getenv('AI_BATCH_SIZE', 10))
     AI_CACHE_TTL     = int(os.getenv('AI_CACHE_TTL', 3600))
+    AI_HISTORY_MESSAGE_LIMIT = _env_int('AI_HISTORY_MESSAGE_LIMIT', 6, 0)
     AI_FALLBACK_MESSAGE = os.getenv(
         'AI_FALLBACK_MESSAGE',
         'Por ahora no tengo información del catálogo, intentaré más tarde.'

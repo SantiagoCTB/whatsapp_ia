@@ -507,9 +507,16 @@ class CatalogResponder:
         response = client.embeddings.create(model=Config.AI_EMBED_MODEL, input=texts)
         return [item.embedding for item in response.data]
 
-    def _cache_key(self, question: str) -> str:
-        normalized = question.strip().lower()
-        return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+    def _cache_key(self, question: str, history: Optional[List[Dict[str, str]]]) -> str:
+        normalized_question = question.strip().lower()
+        history_payload = ""
+        if history:
+            try:
+                history_payload = json.dumps(history, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                history_payload = str(history)
+        cache_input = f"{normalized_question}\n{history_payload}" if history_payload else normalized_question
+        return hashlib.sha1(cache_input.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _build_stats(metadata: List[Dict[str, object]]) -> Dict[str, object]:
@@ -855,7 +862,13 @@ class CatalogResponder:
         set_ai_last_processed_to_latest()
         return stats
 
-    def answer(self, numero: str, question: str, top_k: int = 4) -> Tuple[Optional[str], List[Dict[str, object]]]:
+    def answer(
+        self,
+        numero: str,
+        question: str,
+        top_k: int = 4,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Tuple[Optional[str], List[Dict[str, object]]]:
         """Genera una respuesta basada en el catálogo."""
         if not question or not question.strip():
             return None, []
@@ -867,10 +880,11 @@ class CatalogResponder:
 
         client = self._ensure_client()
         normalized_question = question.strip()
+        normalized_history = self._normalize_history(history)
 
         cache_payload = None
         if self._redis:
-            cache_payload = self._redis.get(self._cache_key(normalized_question))
+            cache_payload = self._redis.get(self._cache_key(normalized_question, normalized_history))
         if cache_payload:
             try:
                 cached = json.loads(cache_payload)
@@ -886,13 +900,13 @@ class CatalogResponder:
                 answer = None
                 references = []
                 if self._redis:
-                    self._redis.delete(self._cache_key(normalized_question))
+                    self._redis.delete(self._cache_key(normalized_question, normalized_history))
             else:
                 self._log_interaction(
                     numero,
                     normalized_question,
                     answer,
-                    {"references": references, "from_cache": True},
+                    {"references": references, "from_cache": True, "history": normalized_history},
                 )
                 return answer, references
 
@@ -910,15 +924,19 @@ class CatalogResponder:
             ref["score"] = float(dist)
             references.append(ref)
 
-        prompt = self._build_prompt(normalized_question, references)
+        prompt = self._build_prompt(normalized_question, references, normalized_history)
         answer = self._generate_response(client, prompt)
 
-        metadata_log = {"references": references, "from_cache": False}
+        metadata_log = {"references": references, "from_cache": False, "history": normalized_history}
         if answer:
             if self._redis:
                 try:
                     payload = json.dumps({"answer": answer, "references": references}, ensure_ascii=False)
-                    self._redis.setex(self._cache_key(normalized_question), self._cache_ttl, payload)
+                    self._redis.setex(
+                        self._cache_key(normalized_question, normalized_history),
+                        self._cache_ttl,
+                        payload,
+                    )
                 except Exception:
                     logging.warning("No se pudo almacenar la respuesta en Redis", exc_info=True)
             self._log_interaction(numero, normalized_question, answer, metadata_log)
@@ -927,12 +945,52 @@ class CatalogResponder:
     # --- helpers de generación -----------------------------------------------
 
     @staticmethod
-    def _build_prompt(question: str, references: List[Dict[str, object]]) -> str:
+    def _normalize_history(history: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+        if not history:
+            return []
+
+        normalized: List[Dict[str, str]] = []
+        for turn in history:
+            if not isinstance(turn, dict):
+                continue
+            role_raw = str(turn.get("role") or "").strip().lower()
+            if role_raw in {"cliente", "customer", "user"}:
+                role = "user"
+            elif role_raw in {"assistant", "bot", "agente"}:
+                role = "assistant"
+            else:
+                continue
+            content = (turn.get("content") or "").strip()
+            if not content:
+                continue
+            normalized.append({"role": role, "content": content})
+        return normalized
+
+    @staticmethod
+    def _build_prompt(
+        question: str,
+        references: List[Dict[str, object]],
+        history: Optional[List[Dict[str, str]]],
+    ) -> str:
+        history_lines: List[str] = []
+        for turn in history or []:
+            role = turn.get("role")
+            content = turn.get("content")
+            if not role or not content:
+                continue
+            label = "Cliente" if role == "user" else "Bot"
+            history_lines.append(f"{label}: {content}")
+
+        history_block = ""
+        if history_lines:
+            history_block = "Historial reciente:\n" + "\n".join(history_lines) + "\n\n"
+
         if not references:
             return (
-                "El catálogo está vacío. Si no encuentras información, responde que no está disponible.\n"
-                f"Pregunta: {question}"
+                "El catálogo está vacío. Si no encuentras información, responde que no está disponible.\n\n"
+                f"{history_block}Pregunta: {question}"
             )
+
         context_parts = []
         for idx, ref in enumerate(references, start=1):
             sku_text = ", ".join(ref.get("skus") or []) or "sin SKU"
@@ -946,7 +1004,7 @@ class CatalogResponder:
             "Responde en un único mensaje con frases muy concretas (máximo "
             f"{max(Config.AI_RESPONSE_MAX_SENTENCES, 1)} oraciones cortas). Evita listas extensas y despedidas largas.\n"
             "Si el dato no aparece, informa que miraremos si existe.\n\n"
-            f"Pregunta del cliente: {question}\n\n"
+            f"{history_block}Pregunta del cliente: {question}\n\n"
             f"Catálogo disponible:\n{context}"
         )
 
