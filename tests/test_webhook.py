@@ -13,7 +13,16 @@ from services import ai_worker
 def test_process_step_chain_multiple_triggers(monkeypatch):
     numero = "5212345"
     step = "consulta_envio"
-    regla = (1, "Tenemos servicio de envío disponible", None, "text", None, None, None, "domicilio,envío")
+    regla = (
+        1,
+        "Tenemos servicio de envío disponible",
+        None,
+        "text",
+        None,
+        None,
+        None,
+        "domicilio,envío,entrega urgente",
+    )
 
     class DummyCursor:
         def __init__(self, rows):
@@ -44,13 +53,37 @@ def test_process_step_chain_multiple_triggers(monkeypatch):
         dispatched.append((numero_arg, regla_arg, step_arg))
 
     monkeypatch.setattr(webhook, "dispatch_rule", fake_dispatch)
+    fallback_calls = []
+
+    def fake_fallback(numero_arg, mensaje, **kwargs):
+        fallback_calls.append((numero_arg, mensaje, kwargs))
+
+    monkeypatch.setattr(webhook, "enviar_mensaje", fake_fallback)
+    monkeypatch.setattr(webhook, "update_chat_state", lambda *args, **kwargs: None)
 
     webhook.process_step_chain(numero, text_norm=webhook.normalize_text("domicilio"))
     assert dispatched == [(numero, regla, step)]
+    assert not fallback_calls
 
     dispatched.clear()
     webhook.process_step_chain(numero, text_norm=webhook.normalize_text("envío"))
     assert dispatched == [(numero, regla, step)]
+    assert not fallback_calls
+
+    dispatched.clear()
+    webhook.process_step_chain(numero, text_norm=webhook.normalize_text("Quiero un domicilio"))
+    assert dispatched == [(numero, regla, step)]
+    assert not fallback_calls
+
+    dispatched.clear()
+    webhook.process_step_chain(numero, text_norm=webhook.normalize_text("Necesito una entrega urgente"))
+    assert dispatched == [(numero, regla, step)]
+    assert not fallback_calls
+
+    dispatched.clear()
+    webhook.process_step_chain(numero, text_norm=webhook.normalize_text("servicio domiciliario"))
+    assert not dispatched
+    assert fallback_calls == [(numero, webhook.DEFAULT_FALLBACK_TEXT, {})]
 
 
 def test_handle_text_message_keyword_redirect(monkeypatch):
