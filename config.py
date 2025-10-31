@@ -63,7 +63,7 @@ class Config:
     AI_POLL_INTERVAL = float(os.getenv('AI_POLL_INTERVAL', 3))
     AI_BATCH_SIZE    = int(os.getenv('AI_BATCH_SIZE', 10))
     AI_CACHE_TTL     = int(os.getenv('AI_CACHE_TTL', 3600))
-    AI_HISTORY_MESSAGE_LIMIT = int(os.getenv('AI_HISTORY_MESSAGE_LIMIT', 6))
+    AI_HISTORY_MESSAGE_LIMIT = _env_int('AI_HISTORY_MESSAGE_LIMIT', 6, min_value=0)
     AI_FALLBACK_MESSAGE = os.getenv(
         'AI_FALLBACK_MESSAGE',
         'Por ahora no tengo información del catálogo, intentaré más tarde.'

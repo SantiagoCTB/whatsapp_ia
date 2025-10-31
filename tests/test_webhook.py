@@ -95,10 +95,11 @@ def test_handle_text_message_keyword_redirect(monkeypatch):
 
     monkeypatch.setattr(webhook, "process_step_chain", fake_process)
 
-    webhook.handle_text_message(numero, "Quiero hacer un pedido", save=False)
+    mensaje = "Quiero hacer un pedido"
+    webhook.handle_text_message(numero, mensaje, save=False)
 
     assert advance_calls == [(numero, redirect_step)]
-    assert process_calls == [(numero, None)]
+    assert process_calls == [(numero, webhook.normalize_text(mensaje))]
     assert any(call[2] == webhook.AI_BLOCKED_STATE for call in update_calls)
     assert all(call[2] != webhook.AI_PENDING_STATE for call in update_calls)
     assert captured_steps == [("flujo_compra",)]
@@ -196,11 +197,10 @@ def test_webhook_keyword_short_circuit(monkeypatch):
     monkeypatch.setattr(webhook, "update_chat_state", fake_update)
 
     process_calls = []
-    monkeypatch.setattr(
-        webhook,
-        "process_step_chain",
-        lambda numero_arg, text_norm=None: process_calls.append((numero_arg, text_norm)),
-    )
+    def fake_process(numero_arg, text_norm=None):
+        process_calls.append((numero_arg, text_norm))
+
+    monkeypatch.setattr(webhook, "process_step_chain", fake_process)
 
     advance_calls = []
 
@@ -249,7 +249,10 @@ def test_webhook_keyword_short_circuit(monkeypatch):
     assert response.status_code == 200
     assert response.get_json() == {"status": "processed_immediate"}
     assert advance_calls == [(numero, redirect_step)]
-    assert process_calls == [(numero, None)]
+    assert process_calls == [(
+        numero,
+        webhook.normalize_text(payload["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"]),
+    )]
     assert webhook.message_buffer == {}
     assert numero not in webhook.pending_timers
     assert requested_steps == [("flujo_compra",)]
