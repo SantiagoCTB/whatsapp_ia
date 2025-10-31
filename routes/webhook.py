@@ -374,7 +374,7 @@ def handle_text_message(numero: str, texto: str, save: bool = True):
         if redirect_step and triggers and any(trigger in text_norm for trigger in triggers):
             advance_steps(numero, redirect_step)
             update_chat_state(numero, redirect_step, AI_BLOCKED_STATE)
-            process_step_chain(numero)
+            process_step_chain(numero, text_norm)
             return
         update_chat_state(numero, step_db, AI_PENDING_STATE)
         return
