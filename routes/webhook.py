@@ -241,9 +241,15 @@ def process_step_chain(numero, text_norm=None):
             for part in re.split(r'[,\n]+', patt)
             if part and part.strip()
         ]
-        if any(trigger == text_norm for trigger in subtriggers):
-            dispatch_rule(numero, r, step)
-            return
+        for trigger in subtriggers:
+            if not trigger:
+                continue
+            if trigger == text_norm:
+                dispatch_rule(numero, r, step)
+                return
+            if text_norm and re.search(rf'(?<!\S){re.escape(trigger)}(?!\S)', text_norm):
+                dispatch_rule(numero, r, step)
+                return
 
     # Regla comodín
     if comodines:
