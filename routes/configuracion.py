@@ -426,6 +426,19 @@ def eliminar_regla(regla_id):
     finally:
         conn.close()
 
+def _map_boton_row(row):
+    media_urls = row[4].split('||') if row[4] else []
+    media_tipos = row[5].split('||') if row[5] else []
+    return {
+        'id': row[0],
+        'mensaje': row[1],
+        'tipo': row[2],
+        'nombre': row[3],
+        'media_urls': media_urls,
+        'media_tipos': media_tipos,
+    }
+
+
 @config_bp.route('/botones', methods=['GET', 'POST'])
 def botones():
     if not _require_admin():
@@ -511,7 +524,8 @@ def botones():
              ORDER BY b.id
             """
         )
-        botones = c.fetchall()
+        rows = c.fetchall()
+        botones = [_map_boton_row(row) for row in rows]
         return render_template('botones.html', botones=botones)
     finally:
         conn.close()
@@ -547,16 +561,6 @@ def get_botones():
             """
         )
         rows = c.fetchall()
-        return jsonify([
-            {
-                'id': r[0],
-                'mensaje': r[1],
-                'tipo': r[2],
-                'nombre': r[3],
-                'media_urls': r[4].split('||') if r[4] else [],
-                'media_tipos': r[5].split('||') if r[5] else []
-            }
-            for r in rows
-        ])
+        return jsonify([_map_boton_row(row) for row in rows])
     finally:
         conn.close()
