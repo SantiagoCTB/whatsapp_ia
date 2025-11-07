@@ -73,7 +73,7 @@ Las variables se cargan desde `.env` mediante `python-dotenv` y están centraliz
 | `VERIFY_TOKEN` | Token usado por Meta para validar el webhook. |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Credenciales de MySQL. |
 | `INITIAL_STEP` | Paso inicial del flujo cuando un chat comienza o se reinicia. |
-| `SESSION_TIMEOUT` | Inactividad (segundos) tras la cual se reinicia el flujo del usuario. |
+| `SESSION_TIMEOUT` | Inactividad (segundos) tras la cual se reinicia el flujo del usuario (por defecto 1800 s = 30 min). |
 | `MEDIA_ROOT` | Ruta persistente para guardar archivos subidos; por defecto `static/uploads`. |
 | `MAX_TRANSCRIPTION_DURATION_MS`, `TRANSCRIPTION_MAX_AVG_TIME_SEC` | Límites para controlar la transcripción de audios. |
 | `INIT_DB_ON_START` | (Opcional) Igual a `1` para ejecutar `init_db()` automáticamente al iniciar la app. |
@@ -231,7 +231,7 @@ El modo conversacional con IA permite que un asesor automático responda pregunt
 - **Comodín `*`**: reglas con `input_text='*'` actúan como respuesta por defecto o se ejecutan en cascada durante un salto múltiple (`advance_steps`). 
 - **Handlers personalizados**: reglas pueden definir `handler` y `calculo` para procesar medidas o lógica específica (ej. cálculos de mesones). 
 - **Comandos globales**: antes de evaluar reglas, `handle_global_command` revisa palabras clave y puede reiniciar el flujo sin perder contexto. 
-- **Sesiones**: si un usuario queda inactivo más del `SESSION_TIMEOUT`, el flujo se reinicia automáticamente (`delete_chat_state`). 
+- **Sesiones**: si un usuario queda inactivo más del `SESSION_TIMEOUT` (30 min por defecto), el flujo se reinicia automáticamente (`delete_chat_state`).
 
 ## Manejo de medios y transcripción
 - Los archivos subidos por asesores se guardan en `MEDIA_ROOT` y se exponen vía `static/uploads/`.

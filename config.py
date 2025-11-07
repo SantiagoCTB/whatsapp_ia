@@ -35,7 +35,9 @@ class Config:
     PHONE_NUMBER_ID = os.getenv('PHONE_NUMBER_ID')
     VERIFY_TOKEN = os.getenv('VERIFY_TOKEN')
     DB_PATH = 'database.db'
-    SESSION_TIMEOUT = 600
+    # Tiempo (en segundos) antes de reiniciar la sesión por inactividad. Puede
+    # sobreescribirse estableciendo la variable de entorno ``SESSION_TIMEOUT``.
+    SESSION_TIMEOUT = _env_int('SESSION_TIMEOUT', 1800, min_value=0)
     INITIAL_STEP = os.getenv('INITIAL_STEP', 'menu_principal')
 
     MAX_TRANSCRIPTION_DURATION_MS = int(os.getenv('MAX_TRANSCRIPTION_DURATION_MS', 60000))
