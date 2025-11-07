@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from config import Config
 from services.ai_responder import get_catalog_responder
+from services.catalog_ingest import get_catalog_ingest_status, start_catalog_ingest
 import os
 import uuid
 import re
@@ -357,6 +358,7 @@ def ia_settings():
     error = None
     responder = get_catalog_responder()
     stats_result = None
+    ingest_status = get_catalog_ingest_status()
 
     if request.method == 'POST':
         action = request.form.get('action')
@@ -372,6 +374,8 @@ def ia_settings():
         elif action == 'ingest':
             if not Config.OPENAI_API_KEY:
                 error = 'Configura la variable OPENAI_API_KEY antes de cargar un catálogo.'
+            elif ingest_status.get('state') == 'running':
+                error = 'Ya hay un catálogo en procesamiento. Espera a que termine antes de subir uno nuevo.'
             else:
                 file = request.files.get('catalogo')
                 if not file or not file.filename.lower().endswith('.pdf'):
@@ -382,16 +386,41 @@ def ia_settings():
                     dest_path = os.path.join(Config.CATALOG_UPLOAD_DIR, unique_name)
                     file.save(dest_path)
                     try:
-                        stats_result = responder.ingest_pdf(dest_path, source_name=filename)
-                        message = f"Catálogo procesado correctamente ({stats_result['chunks']} fragmentos)."
+                        start_catalog_ingest(responder, dest_path, filename)
+                        message = (
+                            "Catálogo recibido. El procesamiento continuará en segundo plano; "
+                            "recarga la página para ver el resultado."
+                        )
+                    except RuntimeError as exc:
+                        error = str(exc)
+                        if os.path.exists(dest_path):
+                            os.remove(dest_path)
                     except Exception as exc:
-                        logging.exception("Error al procesar el catálogo para IA")
+                        logging.exception("Error al encolar el procesamiento del catálogo")
                         error = f"No se pudo procesar el catálogo: {exc}"
+                        if os.path.exists(dest_path):
+                            os.remove(dest_path)
+                    ingest_status = get_catalog_ingest_status()
         else:
             error = 'Acción no soportada.'
 
     settings = get_ai_settings()
     summary = stats_result or responder.get_summary()
+
+    if ingest_status.get('state') == 'failed' and ingest_status.get('error'):
+        error = error or f"El último procesamiento falló: {ingest_status['error']}"
+    elif ingest_status.get('state') == 'running':
+        message = message or (
+            f"Procesando catálogo {ingest_status.get('source_name') or ''}. Esto puede tardar varios minutos."
+        )
+    elif ingest_status.get('state') == 'succeeded' and ingest_status.get('stats'):
+        stats = ingest_status['stats']
+        if isinstance(stats, dict) and not stats_result:
+            stats_result = stats
+            summary = stats
+            if not message and request.method == 'POST':
+                message = f"Catálogo procesado correctamente ({stats.get('chunks', 0)} fragmentos)."
+
     return render_template(
         'ia_settings.html',
         settings=settings,
@@ -401,6 +430,7 @@ def ia_settings():
         handoff_step=Config.AI_HANDOFF_STEP,
         has_openai_key=bool(Config.OPENAI_API_KEY),
         Config=Config,
+        ingest_status=ingest_status,
     )
 
 
