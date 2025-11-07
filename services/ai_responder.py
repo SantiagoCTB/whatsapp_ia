@@ -2,6 +2,7 @@ import json
 import inspect
 import logging
 import os
+import subprocess
 import threading
 import hashlib
 import re
@@ -642,6 +643,8 @@ class CatalogResponder:
         tess_kwargs: Dict[str, object] = {}
         if Config.AI_OCR_TESSERACT_CONFIG:
             tess_kwargs["config"] = Config.AI_OCR_TESSERACT_CONFIG
+        if Config.AI_OCR_TESSERACT_TIMEOUT:
+            tess_kwargs["timeout"] = max(1, int(Config.AI_OCR_TESSERACT_TIMEOUT))
 
         if Config.AI_OCR_TESSERACT_ENABLED and pytesseract is not None:
             if self._ensure_tesseract_available():
@@ -660,12 +663,19 @@ class CatalogResponder:
                 except Exception as exc:
                     tesseract_mod = getattr(pytesseract, "pytesseract", None)
                     not_found_exc = getattr(tesseract_mod, "TesseractNotFoundError", None) if tesseract_mod else None
+                    timeout_exc = getattr(subprocess, "TimeoutExpired", None)
 
                     if not_found_exc and isinstance(exc, not_found_exc):
                         logging.warning("Tesseract no está instalado en el sistema.")
                         local_error = "tesseract_missing"
                         self._tesseract_ready = False
                         self._tesseract_lang_arg = None
+                    elif timeout_exc and isinstance(exc, timeout_exc):
+                        logging.warning(
+                            "Tesseract excedió el tiempo máximo de procesamiento para la página %s",
+                            page_number,
+                        )
+                        local_error = "ocr_timeout"
                     elif (
                         lang_arg
                         and "Failed loading language" in str(exc)
