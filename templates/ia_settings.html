@@ -56,6 +56,17 @@
         <input id="catalogo" name="catalogo" type="file" accept="application/pdf" {% if not has_openai_key %}disabled{% endif %}>
         <button class="btn-primary" type="submit" {% if not has_openai_key %}disabled{% endif %}>Procesar catálogo</button>
     </form>
+    {% if ingest_status %}
+    <div style="margin-top:12px;font-size:14px;color:#424242;">
+        {% if ingest_status.state == 'running' %}
+            Procesando <strong>{{ ingest_status.source_name or 'catálogo' }}</strong> desde {{ ingest_status.started_at }}.
+        {% elif ingest_status.state == 'succeeded' %}
+            Último catálogo procesado correctamente{% if ingest_status.finished_at %} ({{ ingest_status.finished_at }}){% endif %}.
+        {% elif ingest_status.state == 'failed' %}
+            Error en el último procesamiento: <span style="color:#c62828;">{{ ingest_status.error }}</span>.
+        {% endif %}
+    </div>
+    {% endif %}
     <p style="margin-top:12px;font-size:14px;color:#424242;">
         Cada respuesta registrará los SKU y páginas consultados en la tabla de auditoría (<code>ia_logs</code>) y se cacheará en Redis si está disponible.
     </p>
