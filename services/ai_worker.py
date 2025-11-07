@@ -11,6 +11,8 @@ from services.db import (
     get_ai_settings,
     get_messages_for_ai,
     get_recent_messages_for_context,
+    log_ai_interaction,
+    update_ai_last_processed,
     update_chat_state,
 )
 from services.whatsapp_api import enviar_mensaje
@@ -64,6 +66,7 @@ class AIWorker(threading.Thread):
                     numero = row["numero"]
                     texto = row["mensaje"]
 
+                    previous_last_id = last_id
                     claimed = claim_ai_message(last_id, message_id)
                     if not claimed:
                         last_id = max(last_id, message_id)
@@ -104,8 +107,68 @@ class AIWorker(threading.Thread):
                             texto,
                             history=history_payload,
                         )
-                    except Exception:
+                    except Exception as exc:
                         logging.exception("Error generando respuesta IA para %s", numero)
+
+                        fallback_message = (Config.AI_FALLBACK_MESSAGE or "").strip()
+                        if not fallback_message:
+                            fallback_message = (
+                                "Lo siento, ocurrió un problema con mi respuesta. Intenta nuevamente más tarde."
+                            )
+
+                        fallback_sent = False
+                        if fallback_message:
+                            try:
+                                fallback_sent = enviar_mensaje(
+                                    numero,
+                                    fallback_message,
+                                    tipo="bot",
+                                    tipo_respuesta="texto",
+                                    step=Config.AI_HANDOFF_STEP,
+                                )
+                            except Exception:
+                                logging.exception(
+                                    "Error enviando fallback de IA para %s", numero
+                                )
+                                fallback_sent = False
+
+                        metadata = {
+                            "status": "error",
+                            "reason": "answer_exception",
+                            "exception": repr(exc),
+                            "fallback_sent": bool(fallback_sent),
+                        }
+                        if fallback_sent:
+                            metadata["fallback_message"] = fallback_message
+
+                        try:
+                            log_ai_interaction(
+                                numero,
+                                texto,
+                                fallback_message if fallback_sent else None,
+                                metadata,
+                            )
+                        except Exception:
+                            logging.warning(
+                                "No se pudo registrar el fallo en ia_logs para %s",
+                                numero,
+                                exc_info=True,
+                            )
+
+                        if fallback_sent:
+                            update_chat_state(
+                                numero, Config.AI_HANDOFF_STEP, "ia_error"
+                            )
+                        else:
+                            try:
+                                update_ai_last_processed(previous_last_id)
+                                last_id = previous_last_id
+                            except Exception:
+                                logging.warning(
+                                    "No se pudo restablecer el puntero de IA tras fallo de fallback para %s",
+                                    numero,
+                                    exc_info=True,
+                                )
                         continue
 
                     if answer:
