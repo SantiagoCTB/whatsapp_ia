@@ -6,13 +6,23 @@ from flask import Blueprint, render_template, request, redirect, session, url_fo
 from werkzeug.utils import secure_filename
 from config import Config
 from services.whatsapp_api import enviar_mensaje
-from services.db import get_connection, get_chat_state, update_chat_state
+from services.db import get_connection, get_chat_state, update_chat_state, close_chat
 
 chat_bp = Blueprint('chat', __name__)
 
 # Carpeta de subida debe coincidir con la de whatsapp_api
 MEDIA_ROOT = Config.MEDIA_ROOT
 os.makedirs(Config.MEDIA_ROOT, exist_ok=True)
+
+_CHAT_PRESENCE_TABLES = ('mensajes', 'chat_state', 'alias', 'chat_roles')
+
+
+def _chat_has_records(cursor, numero):
+    for table in _CHAT_PRESENCE_TABLES:
+        cursor.execute(f"SELECT 1 FROM {table} WHERE numero=%s LIMIT 1", (numero,))
+        if cursor.fetchone():
+            return True
+    return False
 
 @chat_bp.route('/')
 def index():
@@ -412,6 +422,77 @@ def set_alias():
     conn.close()
 
     return jsonify({"status": "ok"}), 200
+
+
+@chat_bp.route('/chats/<numero>/close', methods=['POST'])
+def close_chat_endpoint(numero):
+    if 'user' not in session:
+        return jsonify({'error': 'No autorizado'}), 401
+
+    rol = session.get('rol')
+    conn = get_connection()
+    c = conn.cursor()
+
+    if rol != 'admin':
+        c.execute("SELECT id FROM roles WHERE keyword=%s", (rol,))
+        row = c.fetchone()
+        role_id = row[0] if row else None
+        if not role_id:
+            conn.close()
+            return jsonify({'error': 'No autorizado'}), 403
+        c.execute(
+            "SELECT 1 FROM chat_roles WHERE numero = %s AND role_id = %s",
+            (numero, role_id),
+        )
+        if not c.fetchone():
+            conn.close()
+            return jsonify({'error': 'No autorizado'}), 403
+
+    chat_exists = _chat_has_records(c, numero)
+    conn.close()
+    if not chat_exists:
+        return jsonify({'error': 'Chat no encontrado'}), 404
+
+    close_chat(numero)
+    return jsonify({'status': 'closed', 'numero': numero, 'estado': 'cerrado'})
+
+
+@chat_bp.route('/chats/<numero>', methods=['DELETE'])
+def delete_chat(numero):
+    if 'user' not in session:
+        return jsonify({'error': 'No autorizado'}), 401
+
+    rol = session.get('rol')
+    conn = get_connection()
+    c = conn.cursor()
+
+    if rol != 'admin':
+        c.execute("SELECT id FROM roles WHERE keyword=%s", (rol,))
+        row = c.fetchone()
+        role_id = row[0] if row else None
+        if not role_id:
+            conn.close()
+            return jsonify({'error': 'No autorizado'}), 403
+        c.execute(
+            "SELECT 1 FROM chat_roles WHERE numero = %s AND role_id = %s",
+            (numero, role_id),
+        )
+        if not c.fetchone():
+            conn.close()
+            return jsonify({'error': 'No autorizado'}), 403
+
+    if not _chat_has_records(c, numero):
+        conn.close()
+        return jsonify({'error': 'Chat no encontrado'}), 404
+
+    c.execute("DELETE FROM mensajes WHERE numero=%s", (numero,))
+    c.execute("DELETE FROM chat_state WHERE numero=%s", (numero,))
+    c.execute("DELETE FROM chat_roles WHERE numero=%s", (numero,))
+    c.execute("DELETE FROM alias WHERE numero=%s", (numero,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'status': 'deleted', 'numero': numero})
 
 @chat_bp.route('/assign_chat_role', methods=['POST'])
 def assign_chat_role():

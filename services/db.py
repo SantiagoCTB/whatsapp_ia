@@ -515,6 +515,26 @@ def delete_chat_state(numero):
     conn.commit()
     conn.close()
 
+
+def close_chat(numero):
+    """Marca un chat como cerrado forzando el estado en ``chat_state``."""
+    conn = get_connection()
+    c    = conn.cursor()
+    c.execute(
+        """
+        INSERT INTO chat_state (numero, step, estado, last_activity)
+        VALUES (%s, %s, %s, NOW())
+        ON DUPLICATE KEY UPDATE
+            step = VALUES(step),
+            estado = VALUES(estado),
+            last_activity = VALUES(last_activity)
+        """,
+        (numero, None, 'cerrado'),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
 def obtener_mensajes_por_numero(numero):
     conn = get_connection()
     c    = conn.cursor()

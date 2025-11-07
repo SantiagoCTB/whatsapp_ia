@@ -55,19 +55,27 @@
   </div>
 </div>
 
-  <div id="contextMenu" class="context-menu"><div id="replyAction">Responder</div></div>
+  <div id="contextMenu" class="context-menu">
+    <div id="replyAction" data-action="reply">Responder</div>
+  </div>
+  <div id="chatContextMenu" class="context-menu">
+    <div data-action="alias">Asignar alias</div>
+    <div data-action="close">Finalizar chat</div>
+    <div data-action="delete">Eliminar chat</div>
+  </div>
 
   <div class="role-indicator">{{ rol }}</div>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       let currentChat = null, autoRefresh = null, todosChats = [], lastCount = 0, replyTo = null;
-      let selectedBubble = null;
+      let selectedBubble = null, chatContextTarget = null;
       const chatListEl = document.getElementById('chatList');
       const chatBoxEl  = document.getElementById('chatBox');
       const botoneraEl = document.getElementById('botonera');
       const replyPreviewEl = document.getElementById('replyPreview');
       const contextMenu = document.getElementById('contextMenu');
+      const chatContextMenu = document.getElementById('chatContextMenu');
       const replyAction = document.getElementById('replyAction');
       const sidebar = document.querySelector('.sidebar');
       const menuToggle = document.getElementById('menuToggle');
@@ -177,7 +185,7 @@
           return container;
         }
 
-        function playAlertSound() {
+      function playAlertSound() {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const oscillator = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -189,6 +197,28 @@
         oscillator.start();
         oscillator.stop(ctx.currentTime + 0.2);
         oscillator.onended = () => ctx.close();
+      }
+
+      function clearCurrentChatSelection() {
+        currentChat = null;
+        lastCount = 0;
+        if (autoRefresh) {
+          clearInterval(autoRefresh);
+          autoRefresh = null;
+        }
+        chatBoxEl.innerHTML = '';
+        botoneraEl.innerHTML = '';
+        replyTo = null;
+        replyPreviewEl.style.display = 'none';
+        replyPreviewEl.innerHTML = '';
+        selectedBubble = null;
+        document.querySelectorAll('#chatList li').forEach(li => {
+          li.classList.remove('active');
+          li.dataset.active = 'false';
+        });
+        delete chatListEl.dataset.activeNumero;
+        delete document.body.dataset.activeChat;
+        hideContextMenus();
       }
 
       document.querySelectorAll('.role-icon').forEach(icon => {
@@ -213,7 +243,15 @@
           });
         });
 
-      document.addEventListener('click', () => contextMenu.classList.remove('show'));
+      const hideContextMenus = () => {
+        contextMenu.classList.remove('show');
+        chatContextMenu.classList.remove('show');
+        if (chatContextTarget) {
+          chatContextTarget.classList.remove('context-target');
+          chatContextTarget = null;
+        }
+      };
+      document.addEventListener('click', hideContextMenus);
 
       replyAction.onclick = () => {
         if (!selectedBubble) return;
@@ -256,10 +294,12 @@
       // Cargar lista de chats
       function fetchChatList() {
         fetch('/get_chat_list')
-          .then(r=>r.json())
-          .then(data=>{
+          .then(r => r.json())
+          .then(data => {
             todosChats = data;
-            chatListEl.innerHTML='';
+            const activeNumero = currentChat;
+            let activeFound = false;
+            chatListEl.innerHTML = '';
             data.forEach(c => {
               if (userRole !== 'admin') {
                 const roles = c.roles_kw || [];
@@ -274,16 +314,20 @@
               if (serverTime) lastChatTimestamps[c.numero] = serverTime;
               const li = document.createElement('li');
               li.textContent = c.alias ? `${c.alias} (${c.numero})` : c.numero;
-              if (c.estado) li.classList.add('estado-' + c.estado);
+              li.dataset.numero = c.numero;
+              li.dataset.alias = c.alias || '';
+              if (c.estado) {
+                li.classList.add('estado-' + c.estado);
+                li.dataset.estado = c.estado;
+              } else {
+                li.dataset.estado = '';
+              }
 
               li.draggable = true;
               li.addEventListener('dragstart', e => {
                 e.dataTransfer.setData('text/plain', c.numero);
               });
 
-              // Badges por roles
-              li.querySelectorAll('.badge').forEach(b => b.remove());
-              li.querySelectorAll('.badges').forEach(bc => bc.remove());
               const badgeContainer = document.createElement('span');
               badgeContainer.className = 'badges';
               if (c.roles_kw && c.roles_kw.length) {
@@ -296,35 +340,135 @@
                 li.appendChild(badgeContainer);
               }
 
-              // Al hacer clic, seleccionar el chat
-              li.onclick = () => selectChat(c.numero, li);
+              li.onclick = () => {
+                hideContextMenus();
+                selectChat(c.numero, li);
+              };
 
-              // ✅ Clic derecho para asignar alias
-              li.addEventListener('contextmenu', function (e) {
-                e.preventDefault(); // evita el menú del navegador
-
-                const nombre = prompt("Asignar alias a: " + c.numero, c.alias || "");
-                if (nombre !== null && nombre.trim() !== "") {
-                  fetch('/set_alias', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ numero: c.numero, nombre })
-                  }).then(() => fetchChatList());
+              li.addEventListener('contextmenu', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                contextMenu.classList.remove('show');
+                chatContextMenu.classList.remove('show');
+                if (chatContextTarget) {
+                  chatContextTarget.classList.remove('context-target');
                 }
+                chatContextTarget = li;
+                li.classList.add('context-target');
+                chatContextMenu.dataset.numero = c.numero;
+                chatContextMenu.dataset.alias = c.alias || '';
+                chatContextMenu.style.top = `${e.pageY}px`;
+                chatContextMenu.style.left = `${e.pageX}px`;
+                chatContextMenu.classList.add('show');
               });
+
+              if (activeNumero && c.numero === activeNumero) {
+                li.classList.add('active');
+                li.dataset.active = 'true';
+                activeFound = true;
+              } else {
+                li.dataset.active = 'false';
+              }
 
               chatListEl.appendChild(li);
             });
+
+            if (activeFound) {
+              chatListEl.dataset.activeNumero = activeNumero;
+              document.body.dataset.activeChat = activeNumero;
+            } else if (activeNumero) {
+              clearCurrentChatSelection();
+            } else {
+              delete chatListEl.dataset.activeNumero;
+              delete document.body.dataset.activeChat;
+            }
           });
       }
+
+      chatContextMenu.addEventListener('click', async event => {
+        event.stopPropagation();
+        const target = event.target;
+        if (!target || !target.dataset || !target.dataset.action) return;
+        const action = target.dataset.action;
+        const numero = chatContextMenu.dataset.numero;
+        const aliasActual = chatContextMenu.dataset.alias || '';
+        hideContextMenus();
+        if (!numero) return;
+
+        if (action === 'alias') {
+          const nombre = prompt(`Asignar alias a: ${numero}`, aliasActual);
+          if (nombre !== null) {
+            const trimmed = nombre.trim();
+            if (trimmed !== '') {
+              const res = await fetch('/set_alias', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ numero, nombre: trimmed })
+              });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(err.error || 'No se pudo actualizar el alias');
+                return;
+              }
+              chatContextMenu.dataset.alias = trimmed;
+              fetchChatList();
+            }
+          }
+          return;
+        }
+
+        if (action === 'close') {
+          if (!confirm(`¿Finalizar el chat ${numero}?`)) return;
+          const res = await fetch(`/chats/${encodeURIComponent(numero)}/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ numero })
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'No se pudo finalizar el chat');
+            return;
+          }
+          if (numero === currentChat) {
+            clearCurrentChatSelection();
+          }
+          fetchChatList();
+          return;
+        }
+
+        if (action === 'delete') {
+          if (!confirm(`¿Eliminar definitivamente el chat ${numero}?`)) return;
+          const res = await fetch(`/chats/${encodeURIComponent(numero)}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ numero })
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'No se pudo eliminar el chat');
+            return;
+          }
+          if (numero === currentChat) {
+            clearCurrentChatSelection();
+          }
+          fetchChatList();
+        }
+      });
 
       // Seleccionar chat
       function selectChat(numero, liEl) {
         currentChat = numero;
         lastCount = 0; // reset count so the initial load doesn't trigger alerts
-        // marcar activo
-        document.querySelectorAll('#chatList li').forEach(li => li.classList.remove('active'));
-        liEl.classList.add('active');
+        document.querySelectorAll('#chatList li').forEach(li => {
+          li.classList.remove('active');
+          li.dataset.active = 'false';
+        });
+        if (liEl) {
+          liEl.classList.add('active');
+          liEl.dataset.active = 'true';
+        }
+        chatListEl.dataset.activeNumero = numero;
+        document.body.dataset.activeChat = numero;
         if (autoRefresh) clearInterval(autoRefresh);
         autoRefresh = setInterval(loadMessages, 3000);
         loadMessages(); loadBotonera();
