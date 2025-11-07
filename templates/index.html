@@ -313,15 +313,36 @@
               }
               if (serverTime) lastChatTimestamps[c.numero] = serverTime;
               const li = document.createElement('li');
-              li.textContent = c.alias ? `${c.alias} (${c.numero})` : c.numero;
               li.dataset.numero = c.numero;
               li.dataset.alias = c.alias || '';
-              if (c.estado) {
-                li.classList.add('estado-' + c.estado);
-                li.dataset.estado = c.estado;
+
+              const label = document.createElement('span');
+              label.className = 'chat-label';
+              label.textContent = c.alias ? `${c.alias} (${c.numero})` : c.numero;
+              label.title = label.textContent;
+
+              const indicator = document.createElement('span');
+              indicator.className = 'chat-state-indicator';
+              indicator.setAttribute('aria-hidden', 'true');
+
+              const estadoRaw = (c.estado || '').toString().trim();
+              const estadoKey = estadoRaw
+                ? estadoRaw.toLowerCase().replace(/[^a-z0-9_-]/g, '_')
+                : '';
+
+              if (estadoKey) {
+                li.classList.add('estado-' + estadoKey);
+                li.dataset.estado = estadoKey;
+                indicator.classList.add('estado-' + estadoKey);
+                indicator.title = estadoRaw.replace(/_/g, ' ');
               } else {
                 li.dataset.estado = '';
+                indicator.classList.add('estado-default');
+                indicator.title = 'Sin estado';
               }
+
+              li.appendChild(indicator);
+              li.appendChild(label);
 
               li.draggable = true;
               li.addEventListener('dragstart', e => {
