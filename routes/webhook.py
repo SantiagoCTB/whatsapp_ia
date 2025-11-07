@@ -25,7 +25,6 @@ webhook_bp = Blueprint('webhook', __name__)
 
 VERIFY_TOKEN    = Config.VERIFY_TOKEN
 SESSION_TIMEOUT = Config.SESSION_TIMEOUT
-DEFAULT_FALLBACK_TEXT = "No entendí tu respuesta, intenta de nuevo."
 AI_PENDING_STATE = 'ia_pendiente'
 
 # Mapa numero -> lista de textos recibidos para procesar tras un delay
@@ -258,7 +257,6 @@ def process_step_chain(numero, text_norm=None):
         return
 
     logging.warning("Fallback en step '%s' para entrada '%s'", step, text_norm)
-    enviar_mensaje(numero, DEFAULT_FALLBACK_TEXT)
     update_chat_state(numero, get_current_step(numero), 'sin_regla')
 
 
