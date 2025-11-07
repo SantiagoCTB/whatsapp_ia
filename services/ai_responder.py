@@ -34,6 +34,11 @@ try:
 except Exception:  # pragma: no cover - OCR es opcional
     easyocr = None
 
+try:
+    from PIL import Image  # type: ignore
+except Exception:  # pragma: no cover - OCR es opcional
+    Image = None
+
 from config import Config
 from services.db import (
     log_ai_interaction,
@@ -471,6 +476,68 @@ class CatalogResponder:
         cache[page_number] = rel_path
         return rel_path
 
+    def _prepare_image_for_ocr(self, pil_image):
+        if pil_image is None:
+            return None
+
+        image = pil_image
+
+        try:
+            if getattr(image, "mode", "") not in {"RGB", "L"}:
+                image = image.convert("RGB")
+        except Exception:
+            logging.warning("No se pudo convertir la imagen para OCR", exc_info=True)
+            return pil_image
+
+        try:
+            max_dim = int(getattr(Config, "AI_OCR_MAX_IMAGE_DIMENSION", 0))
+        except Exception:
+            max_dim = 0
+
+        max_dim = max(0, max_dim)
+
+        if max_dim and Image is not None:
+            try:
+                width, height = image.size
+                largest = max(width, height)
+                if largest > max_dim:
+                    scale = max_dim / float(largest)
+                    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+                    resample = getattr(Image, "LANCZOS", getattr(Image, "BICUBIC", getattr(Image, "BILINEAR", 1)))
+                    image = image.resize(new_size, resample=resample)
+            except Exception:
+                logging.warning("No se pudo redimensionar la imagen para OCR", exc_info=True)
+
+        try:
+            desired_format = getattr(Config, "AI_OCR_TESSERACT_IMAGE_FORMAT", "TIFF")
+            if not desired_format:
+                desired_format = "TIFF"
+            desired_format = desired_format.upper()
+        except Exception:
+            desired_format = "TIFF"
+
+        allowed_formats = {
+            "JPEG",
+            "JPEG2000",
+            "PNG",
+            "PBM",
+            "PGM",
+            "PPM",
+            "TIFF",
+            "BMP",
+            "GIF",
+            "WEBP",
+        }
+        if desired_format not in allowed_formats:
+            desired_format = "TIFF"
+
+        try:
+            image.format = desired_format
+        except Exception:
+            pass
+
+        return image
+
     @staticmethod
     def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 200) -> List[str]:
         cleaned = re.sub(r"\s+", " ", text or "").strip()
@@ -635,6 +702,10 @@ class CatalogResponder:
 
         self._ensure_page_image(pdf_path, page_number, pdf_hash, image_context, pil_image=pil_image)
 
+        pil_image_for_ocr = self._prepare_image_for_ocr(pil_image)
+        if pil_image_for_ocr is None:
+            pil_image_for_ocr = pil_image
+
         text = ""
         backend_used: Optional[str] = None
         backends_available = False
@@ -655,7 +726,7 @@ class CatalogResponder:
                 else:
                     tess_kwargs.pop("lang", None)
                 try:
-                    text = pytesseract.image_to_string(pil_image, **tess_kwargs)
+                    text = pytesseract.image_to_string(pil_image_for_ocr, **tess_kwargs)
                     if text and text.strip():
                         backend_used = "tesseract"
                         ocr_context.pop("error", None)
@@ -689,7 +760,7 @@ class CatalogResponder:
                         tess_kwargs.pop("lang", None)
                         lang_arg = None
                         try:
-                            text = pytesseract.image_to_string(pil_image, **tess_kwargs)
+                            text = pytesseract.image_to_string(pil_image_for_ocr, **tess_kwargs)
                             if text and text.strip():
                                 backend_used = "tesseract"
                                 ocr_context.pop("error", None)
@@ -710,7 +781,7 @@ class CatalogResponder:
             if reader is not None:
                 backends_available = True
                 try:
-                    results = reader.readtext(np.array(pil_image), detail=0)
+                    results = reader.readtext(np.array(pil_image_for_ocr), detail=0)
                     candidate = "\n".join(res.strip() for res in results if res and res.strip())
                     if candidate.strip():
                         backend_used = "easyocr"
