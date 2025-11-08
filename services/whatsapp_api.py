@@ -1,6 +1,9 @@
 import os
 import json
+import logging
 import mimetypes
+from typing import Dict, Optional
+
 import requests
 from flask import url_for
 from config import Config
@@ -10,6 +13,27 @@ TOKEN    = Config.META_TOKEN
 PHONE_ID = Config.PHONE_NUMBER_ID
 os.makedirs(Config.MEDIA_ROOT, exist_ok=True)
 
+def _resolve_media_path(candidate: str) -> str:
+    """Convierte una ruta relativa del catálogo en una ruta absoluta del sistema."""
+
+    raw = (candidate or "").strip()
+    if not raw:
+        return ""
+
+    if os.path.isabs(raw):
+        return raw
+
+    if raw.startswith("/static/"):
+        return os.path.join(Config.BASEDIR, raw.lstrip("/"))
+
+    if raw.startswith("static/"):
+        return os.path.join(Config.BASEDIR, raw)
+
+    if raw.startswith("/"):
+        raw = raw.lstrip("/")
+
+    return os.path.join(Config.MEDIA_ROOT, raw)
+
 def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones=None, reply_to_wa_id=None, step=None, regla_id=None):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
     headers = {
@@ -17,6 +41,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
         "Content-Type": "application/json"
     }
     media_link = None
+    media_store_value = None
 
     if tipo_respuesta == 'texto':
         data = {
@@ -27,15 +52,80 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
         }
 
     elif tipo_respuesta == 'image':
-        media_link = opciones
+        opciones_resueltas = opciones
+        if isinstance(opciones_resueltas, str):
+            opciones_str = opciones_resueltas.strip()
+            if opciones_str.startswith("{") and opciones_str.endswith("}"):
+                try:
+                    decoded = json.loads(opciones_str)
+                except json.JSONDecodeError:
+                    decoded = None
+                if isinstance(decoded, dict):
+                    opciones_resueltas = decoded
+
+        image_payload: Dict[str, object] = {}
+        upload_candidate: Optional[str] = None
+
+        if isinstance(opciones_resueltas, dict):
+            raw_link = opciones_resueltas.get("link")
+            raw_id = opciones_resueltas.get("id")
+            raw_path = opciones_resueltas.get("path") or opciones_resueltas.get("file")
+
+            if isinstance(raw_link, str) and raw_link.strip():
+                image_payload["link"] = raw_link.strip()
+                media_link = image_payload["link"]
+                media_store_value = image_payload["link"]
+
+            if isinstance(raw_id, str) and raw_id.strip():
+                image_payload["id"] = raw_id.strip()
+                media_store_value = image_payload["id"]
+
+            if isinstance(raw_path, str) and raw_path.strip():
+                upload_candidate = raw_path.strip()
+
+        elif isinstance(opciones_resueltas, str) and opciones_resueltas.strip():
+            candidate = opciones_resueltas.strip()
+            if candidate.startswith(("http://", "https://")):
+                image_payload["link"] = candidate
+                media_link = candidate
+                media_store_value = candidate
+            else:
+                upload_candidate = candidate
+        elif opciones_resueltas:
+            upload_candidate = str(opciones_resueltas)
+
+        if upload_candidate:
+            candidate = upload_candidate.strip()
+            if candidate.startswith(("http://", "https://")):
+                image_payload["link"] = candidate
+                media_link = candidate
+                media_store_value = candidate
+            else:
+                resolved_path = _resolve_media_path(candidate)
+                if not resolved_path or not os.path.isfile(resolved_path):
+                    logging.warning("Ruta de imagen no encontrada: %s", candidate)
+                    return False
+                try:
+                    media_id = subir_media(resolved_path)
+                except Exception:
+                    logging.exception("No se pudo subir la imagen a WhatsApp")
+                    return False
+                image_payload.pop("link", None)
+                image_payload["id"] = media_id
+                media_store_value = media_id
+
+        if not image_payload.get("link") and not image_payload.get("id"):
+            return False
+
+        payload_to_send = {k: v for k, v in image_payload.items() if k != "path"}
+        if mensaje:
+            payload_to_send["caption"] = mensaje
+
         data = {
             "messaging_product": "whatsapp",
             "to": numero,
             "type": "image",
-            "image": {
-                "link": opciones,
-                "caption": mensaje
-            }
+            "image": payload_to_send,
         }
 
     elif tipo_respuesta == 'lista':
@@ -233,6 +323,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
             audio_obj["caption"] = mensaje
 
         media_link = audio_obj.get("link")
+        media_store_value = media_link
         data = {
             "messaging_product": "whatsapp",
             "to": numero,
@@ -252,6 +343,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
             video_obj["caption"] = mensaje
 
         media_link = video_obj.get("link")
+        media_store_value = media_link
         data = {
             "messaging_product": "whatsapp",
             "to": numero,
@@ -261,6 +353,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
 
     elif tipo_respuesta == 'document':
         media_link = opciones
+        media_store_value = media_link
         data = {
             "messaging_product": "whatsapp",
             "to": numero,
@@ -303,7 +396,9 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
         tipo_db = f"{tipo}_{tipo_respuesta}"
 
     media_url_db = None
-    if tipo_respuesta == 'video':
+    if tipo_respuesta == 'image':
+        media_url_db = media_store_value
+    elif tipo_respuesta == 'video':
         media_url_db = video_obj.get("link")
     elif tipo_respuesta == 'audio':
         media_url_db = audio_obj.get("link")
