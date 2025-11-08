@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import mimetypes
+from contextlib import closing
 from typing import Dict, Optional
 
 import requests
@@ -33,6 +34,35 @@ def _resolve_media_path(candidate: str) -> str:
         raw = raw.lstrip("/")
 
     return os.path.join(Config.MEDIA_ROOT, raw)
+
+def _is_remote_media_accessible(url: str) -> bool:
+    try:
+        head_response = requests.head(url, allow_redirects=True, timeout=5)
+    except requests.RequestException:
+        logging.warning("No se pudo validar la URL remota mediante HEAD: %s", url, exc_info=True)
+    else:
+        if head_response.ok:
+            return True
+        logging.warning(
+            "HEAD a la URL remota devolvió un estado inesperado %s: %s",
+            head_response.status_code,
+            url,
+        )
+
+    try:
+        with closing(requests.get(url, stream=True, timeout=5)) as get_response:
+            if get_response.ok:
+                return True
+            logging.warning(
+                "GET de verificación a la URL remota devolvió estado %s: %s",
+                get_response.status_code,
+                url,
+            )
+    except requests.RequestException:
+        logging.warning("No se pudo acceder a la URL remota mediante GET: %s", url, exc_info=True)
+
+    return False
+
 
 def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones=None, reply_to_wa_id=None, step=None, regla_id=None):
     url = f"https://graph.facebook.com/v19.0/{PHONE_ID}/messages"
@@ -377,11 +407,7 @@ def enviar_mensaje(numero, mensaje, tipo='bot', tipo_respuesta='texto', opciones
 
     # Validar URLs externas antes de enviar a la API de WhatsApp
     if media_link and isinstance(media_link, str) and media_link.startswith(('http://', 'https://')):
-        try:
-            check = requests.head(media_link, allow_redirects=True, timeout=5)
-        except requests.RequestException:
-            return False
-        if check.status_code != 200:
+        if not _is_remote_media_accessible(media_link):
             return False
     resp = requests.post(url, headers=headers, json=data)
     print(f"[WA API] {resp.status_code} — {resp.text}")
