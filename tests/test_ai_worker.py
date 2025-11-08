@@ -193,6 +193,31 @@ def test_worker_reverts_pointer_when_fallback_fails(worker_instance, monkeypatch
     assert logged["metadata"]["fallback_sent"] is False
 
 
+def test_send_reference_images_uses_fallback(monkeypatch):
+    ai_worker._catalog_media_index = []
+    worker = ai_worker.AIWorker()
+
+    sent_messages = []
+
+    def fake_send(numero, mensaje, **kwargs):
+        sent_messages.append({"numero": numero, "mensaje": mensaje, **kwargs})
+        return True
+
+    monkeypatch.setattr(ai_worker, "enviar_mensaje", fake_send)
+
+    references = [
+        {"image_url": "https://example.com/a.jpg", "score": 0.8, "source": "Catálogo", "page": 3},
+        {"image_url": "https://example.com/b.jpg", "score": 0.2},
+    ]
+
+    worker._send_reference_images("+521234000000", "Respuesta breve", references)
+
+    assert sent_messages, "Se esperaba al menos una imagen de referencia"
+    first = sent_messages[0]
+    assert first["tipo_respuesta"] == "image"
+    assert first["opciones"] == "https://example.com/b.jpg"
+
+
 def teardown_module(module):  # pragma: no cover - limpieza defensiva
     for name, stub in (
         ("services.ai_responder", ai_responder_stub),
