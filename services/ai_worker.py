@@ -2,6 +2,7 @@ import logging
 import threading
 import time
 from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import urljoin
 
 from config import Config
 from services.ai_responder import get_catalog_responder
@@ -331,8 +332,15 @@ class AIWorker(threading.Thread):
             for order, ref in enumerate(references):
                 if not isinstance(ref, dict):
                     continue
-                image_url = ref.get("image_url")
-                if not image_url:
+                media_payload = self._resolve_reference_media(ref)
+                if not media_payload:
+                    continue
+                dedupe_key = (
+                    media_payload.get("link")
+                    or media_payload.get("path")
+                    or media_payload.get("id")
+                )
+                if not dedupe_key:
                     continue
                 try:
                     score_value = float(ref.get("score"))
@@ -368,10 +376,20 @@ class AIWorker(threading.Thread):
         max_images = 1
         sent = 0
         for _, _, ref in ranked:
-            image_url = ref.get("image_url")
-            if not image_url or image_url in seen:
+            if not isinstance(ref, dict):
                 continue
-            seen.add(image_url)
+            media_payload = self._resolve_reference_media(ref)
+            if not media_payload:
+                continue
+            dedupe_key = (
+                media_payload.get("link")
+                or media_payload.get("path")
+                or media_payload.get("id")
+            )
+            if dedupe_key and dedupe_key in seen:
+                continue
+            if dedupe_key:
+                seen.add(str(dedupe_key))
             caption_override = (ref.get("catalog_caption") or "").strip()
             if caption_override:
                 caption = caption_override
@@ -384,17 +402,55 @@ class AIWorker(threading.Thread):
                 if page:
                     caption_parts.append(f"pág. {page}")
                 caption = " – ".join(caption_parts) if caption_parts else "Referencia del catálogo"
+            opciones_payload: object
+            if "path" not in media_payload and set(media_payload.keys()) == {"link"}:
+                opciones_payload = media_payload["link"]
+            else:
+                opciones_payload = media_payload
+
             enviar_mensaje(
                 numero,
                 caption,
                 tipo="bot",
                 tipo_respuesta="image",
-                opciones=str(image_url),
+                opciones=opciones_payload,
                 step=Config.AI_HANDOFF_STEP,
             )
             sent += 1
             if sent >= max_images:
                 break
+
+
+    @staticmethod
+    def _normalize_media_link(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        candidate = str(value).strip()
+        if not candidate:
+            return None
+        if candidate.startswith(("http://", "https://")):
+            return candidate
+        base_url = (Config.MEDIA_PUBLIC_BASE_URL or "").strip()
+        if not base_url:
+            return None
+        if not base_url.endswith("/"):
+            base_url = f"{base_url}/"
+        return urljoin(base_url, candidate.lstrip("/"))
+
+    def _resolve_reference_media(self, ref: Dict[str, object]) -> Optional[Dict[str, str]]:
+        image_url_raw = ref.get("image_url")
+        if isinstance(image_url_raw, str) and image_url_raw.strip():
+            normalized = self._normalize_media_link(image_url_raw)
+            if normalized:
+                return {"link": normalized}
+            if image_url_raw.strip().startswith(("http://", "https://")):
+                return {"link": image_url_raw.strip()}
+
+        image_path = ref.get("image")
+        if isinstance(image_path, str) and image_path.strip():
+            return {"path": image_path.strip()}
+
+        return None
 
 
 def start_ai_worker() -> AIWorker:
