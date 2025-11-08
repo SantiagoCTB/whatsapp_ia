@@ -1084,10 +1084,21 @@ class CatalogResponder:
             "Entrega la respuesta en español neutro y servicial, proponiendo opciones de productos.\n"
             "Responde en un único mensaje con frases muy concretas (máximo "
             f"{max(Config.AI_RESPONSE_MAX_SENTENCES, 1)} oraciones cortas). Evita listas extensas y despedidas largas.\n"
-            "Si el dato no aparece, informa que miraremos si existe.\n\n"
+            "Si el dato no aparece, informa que miraremos si existe.\n"
+            "IMPORTANTE: Usa los nombres EXACTOS de las cabañas y habitaciones tal como aparecen en el catálogo.\n"
+            "Los nombres correctos son:\n"
+            "- Cabaña Cóndor\n"
+            "- Cabaña Mamaquilla\n"
+            "- Cabaña Tunúpa\n"
+            "- Cabaña Taypi\n"
+            "- Cabaña Inti\n"
+            "- Habitación Eucalipto\n"
+            "- Habitación Pino\n"
+            "Si el OCR proporciona un nombre distinto o con errores, corrígelo usando esta lista.\n\n"
             f"{history_block}Pregunta del cliente: {question}\n\n"
             f"Catálogo disponible:\n{context}"
         )
+
 
     def _generate_response(self, client: OpenAI, prompt: str) -> Optional[str]:
         try:
@@ -1101,7 +1112,7 @@ class CatalogResponder:
                                 "type": "input_text",
                                 "text": (
                                     "Eres un asistente experto en productos. Utiliza solo la información suministrada en el contexto."
-                                    "Indica el producto y página del catálogo cuando sea posible."
+                                    "Indica el producto menciona la página y un breve texto junto con la respuesta de la imagen"
                                 ),
                             }
                         ],
