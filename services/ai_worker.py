@@ -290,9 +290,26 @@ class AIWorker(threading.Thread):
             ranked.append((match_points, 0.0, pseudo_ref))
 
         if not ranked:
-            return
+            fallback_ranked: List[Tuple[int, float, Dict[str, object]]] = []
+            for order, ref in enumerate(references):
+                if not isinstance(ref, dict):
+                    continue
+                image_url = ref.get("image_url")
+                if not image_url:
+                    continue
+                try:
+                    score_value = float(ref.get("score"))
+                except (TypeError, ValueError):
+                    score_value = float("inf")
+                fallback_ranked.append((order, score_value, ref))
 
-        ranked.sort(key=lambda item: (-item[0], item[1]))
+            if not fallback_ranked:
+                return
+
+            fallback_ranked.sort(key=lambda item: (item[1], item[0]))
+            ranked = [(0, score, ref) for _, score, ref in fallback_ranked]
+        else:
+            ranked.sort(key=lambda item: (-item[0], item[1]))
 
         seen: Set[str] = set()
         max_images = 1

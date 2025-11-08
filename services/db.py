@@ -971,6 +971,22 @@ def get_catalog_media_keywords() -> List[Dict[str, object]]:
                     return True
         return False
 
+    stopwords_len2 = {
+        "de",
+        "la",
+        "el",
+        "en",
+        "al",
+        "lo",
+        "se",
+        "tu",
+        "su",
+        "mi",
+        "te",
+        "ya",
+        "no",
+    }
+
     for input_text, respuesta, tipo, step, media_url, media_tipo in rows or []:
         if not media_url:
             continue
@@ -988,11 +1004,25 @@ def get_catalog_media_keywords() -> List[Dict[str, object]]:
                 continue
 
             token_list = []
-            for token in normalized.split():
+            raw_tokens = re.split(r"[\s,]+", raw_trigger)
+            for idx, token in enumerate(normalized.split()):
                 if not token:
                     continue
                 if len(token) >= 3 or any(ch.isdigit() for ch in token):
                     token_list.append(token)
+                    continue
+
+                if len(token) == 2:
+                    original = ""
+                    if idx < len(raw_tokens):
+                        original = (raw_tokens[idx] or "").strip()
+
+                    if original and any(ch.isdigit() for ch in original):
+                        token_list.append(token)
+                        continue
+
+                    if token not in stopwords_len2 and any(ch not in "aeiou" for ch in token):
+                        token_list.append(token)
             if not token_list:
                 continue
 
