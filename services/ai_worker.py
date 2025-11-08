@@ -5,16 +5,17 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from config import Config
 from services.ai_responder import get_catalog_responder
-from services.db import (
-    claim_ai_message,
-    get_catalog_media_keywords,
-    get_ai_settings,
-    get_messages_for_ai,
-    get_recent_messages_for_context,
-    log_ai_interaction,
-    update_ai_last_processed,
-    update_chat_state,
-)
+from services import db as db_module
+
+AI_BLOCKED_STATE = getattr(db_module, "AI_BLOCKED_STATE", "ia_bloqueada")
+claim_ai_message = getattr(db_module, "claim_ai_message")
+get_catalog_media_keywords = getattr(db_module, "get_catalog_media_keywords")
+get_ai_settings = getattr(db_module, "get_ai_settings")
+get_messages_for_ai = getattr(db_module, "get_messages_for_ai")
+get_recent_messages_for_context = getattr(db_module, "get_recent_messages_for_context")
+log_ai_interaction = getattr(db_module, "log_ai_interaction")
+update_ai_last_processed = getattr(db_module, "update_ai_last_processed")
+update_chat_state = getattr(db_module, "update_chat_state")
 from services.whatsapp_api import enviar_mensaje
 from services.normalize_text import normalize_text
 
@@ -73,6 +74,42 @@ class AIWorker(threading.Thread):
                         continue
 
                     last_id = message_id
+
+                    ai_step_lower = (Config.AI_HANDOFF_STEP or "").strip().lower()
+                    current_step = (row.get("current_step") or "").strip().lower()
+                    current_state = (row.get("current_estado") or "").strip().lower()
+                    if not ai_step_lower:
+                        try:
+                            update_ai_last_processed(message_id)
+                        except Exception:
+                            logging.warning(
+                                "No se pudo avanzar el puntero de IA cuando no hay step de IA configurado para %s",
+                                numero,
+                                exc_info=True,
+                            )
+                        continue
+
+                    if current_step and current_step != ai_step_lower:
+                        try:
+                            update_ai_last_processed(message_id)
+                        except Exception:
+                            logging.warning(
+                                "No se pudo avanzar el puntero de IA tras detectar cambio de flujo para %s",
+                                numero,
+                                exc_info=True,
+                            )
+                        continue
+
+                    if current_state == AI_BLOCKED_STATE:
+                        try:
+                            update_ai_last_processed(message_id)
+                        except Exception:
+                            logging.warning(
+                                "No se pudo avanzar el puntero de IA porque el estado está bloqueado para %s",
+                                numero,
+                                exc_info=True,
+                            )
+                        continue
 
                     history_limit = max(getattr(Config, "AI_HISTORY_MESSAGE_LIMIT", 0), 0)
                     history_records = []
@@ -304,7 +341,23 @@ class AIWorker(threading.Thread):
                 fallback_ranked.append((order, score_value, ref))
 
             if not fallback_ranked:
-                return
+                for entry in catalog_entries:
+                    image_url = entry.get("media_url")
+                    if not image_url:
+                        continue
+                    label = entry.get("label") or entry.get("raw")
+                    caption_text = (entry.get("respuesta") or "").strip() or label
+                    pseudo_ref = {
+                        "image_url": image_url,
+                        "source": label,
+                        "text": entry.get("raw") or label,
+                        "skus": [],
+                        "catalog_caption": caption_text,
+                    }
+                    ranked = [(0, 0.0, pseudo_ref)]
+                    break
+                else:
+                    return
 
             fallback_ranked.sort(key=lambda item: (item[1], item[0]))
             ranked = [(0, score, ref) for _, score, ref in fallback_ranked]

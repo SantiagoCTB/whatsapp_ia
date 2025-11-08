@@ -873,7 +873,7 @@ def get_messages_for_ai(after_id, handoff_step, limit):
     c    = conn.cursor(dictionary=True)
     c.execute(
         """
-        SELECT m.id, m.numero, m.mensaje
+        SELECT m.id, m.numero, m.mensaje, cs.step AS current_step, cs.estado AS current_estado
           FROM mensajes m
           JOIN chat_state cs ON cs.numero = m.numero
          WHERE m.id > %s
