@@ -548,12 +548,44 @@ class CatalogResponder:
 
     @staticmethod
     def _chunk_text(text: str) -> List[str]:
-        """Normaliza el texto de una página y lo devuelve como un solo fragmento."""
+        """Divide el texto en fragmentos más pequeños manteniendo el contexto."""
 
-        cleaned = re.sub(r"\s+", " ", text or "").strip()
-        if not cleaned:
+        if not text:
             return []
-        return [cleaned]
+
+        normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        segments: List[str] = []
+        buffer: List[str] = []
+
+        def flush_buffer() -> None:
+            if not buffer:
+                return
+            combined = re.sub(r"\s+", " ", " ".join(buffer)).strip()
+            if combined:
+                segments.append(combined)
+            buffer.clear()
+
+        for raw_line in normalized.split("\n"):
+            stripped = raw_line.strip()
+            if not stripped:
+                flush_buffer()
+                continue
+
+            # Quita viñetas comunes y fuerza un nuevo fragmento para separar secciones.
+            bullet_stripped = re.sub(r"^[\u2022•·\-–—]+\s*", "", stripped)
+            if bullet_stripped != stripped:
+                flush_buffer()
+                stripped = bullet_stripped
+
+            # Si detectamos que la línea hace referencia a una entidad conocida,
+            # consideramos que comienza una nueva sección del catálogo.
+            if buffer and find_entities_in_text(stripped):
+                flush_buffer()
+
+            buffer.append(stripped)
+
+        flush_buffer()
+        return segments
 
     @staticmethod
     def _extract_skus(text: str) -> List[str]:
