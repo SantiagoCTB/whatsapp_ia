@@ -40,6 +40,11 @@ except Exception:  # pragma: no cover - OCR es opcional
     Image = None
 
 from config import Config
+from services.catalog_entities import (
+    find_entities_in_text,
+    get_known_entity_names,
+    score_fields_against_entities,
+)
 from services.db import (
     log_ai_interaction,
     set_ai_last_processed_to_latest,
@@ -48,6 +53,9 @@ from services.db import (
 
 
 SKU_PATTERN = re.compile(r"\bSKU[:\s-]*([A-Z0-9-]{3,})\b", re.IGNORECASE)
+
+
+_CATALOG_NAME_BULLETS = "".join(f"- {name}\n" for name in get_known_entity_names())
 
 
 class CatalogResponder:
@@ -996,6 +1004,8 @@ class CatalogResponder:
             ref["score"] = float(dist)
             references.append(ref)
 
+        references = self._prioritize_references_by_entities(question, references)
+
         prompt = self._build_prompt(normalized_question, references, normalized_history)
         answer = self._generate_response(client, prompt)
 
@@ -1078,17 +1088,42 @@ class CatalogResponder:
             "Si el dato no aparece, informa que miraremos si existe.\n"
             "IMPORTANTE: Usa los nombres EXACTOS de las cabañas y habitaciones tal como aparecen en el catálogo.\n"
             "Los nombres correctos son:\n"
-            "- Cabaña Cóndor\n"
-            "- Cabaña Mamaquilla\n"
-            "- Cabaña Tunúpa\n"
-            "- Cabaña Taypi\n"
-            "- Cabaña Inti\n"
-            "- Habitación Eucalipto\n"
-            "- Habitación Pino\n"
+            f"{_CATALOG_NAME_BULLETS}"
             "Si el OCR proporciona un nombre distinto o con errores, corrígelo usando esta lista.\n\n"
             f"{history_block}Pregunta del cliente: {question}\n\n"
             f"Catálogo disponible:\n{context}"
         )
+
+    def _prioritize_references_by_entities(
+        self,
+        question: str,
+        references: List[Dict[str, object]],
+    ) -> List[Dict[str, object]]:
+        entities = find_entities_in_text(question or "")
+        if not entities:
+            return references
+
+        scored: List[Tuple[int, int, Dict[str, object]]] = []
+        for order, ref in enumerate(references):
+            if not isinstance(ref, dict):
+                continue
+            fields = [
+                ref.get("text"),
+                ref.get("source"),
+                ref.get("catalog_caption"),
+                " ".join(ref.get("skus") or []),
+            ]
+            score = score_fields_against_entities(fields, entities)
+            scored.append((score, order, ref))
+
+        if not scored:
+            return references
+
+        if not any(score > 0 for score, _, _ in scored):
+            return references
+
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [item[2] for item in scored]
 
 
     def _generate_response(self, client: OpenAI, prompt: str) -> Optional[str]:
