@@ -1,12 +1,45 @@
 import os
 import sys
+import types
 
 import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+mysql_module = types.ModuleType("mysql")
+mysql_connector = types.ModuleType("mysql.connector")
+mysql_connector.connect = lambda *args, **kwargs: None
+mysql_module.connector = mysql_connector
+sys.modules.setdefault("mysql", mysql_module)
+sys.modules.setdefault("mysql.connector", mysql_connector)
+
+db_stub = types.ModuleType("services.db")
+db_stub.AI_BLOCKED_STATE = "ia_bloqueada"
+db_stub.claim_ai_message = lambda *args, **kwargs: True
+db_stub.get_catalog_media_keywords = lambda: []
+db_stub.get_ai_settings = lambda: {}
+db_stub.get_messages_for_ai = lambda *args, **kwargs: []
+db_stub.get_recent_messages_for_context = lambda *args, **kwargs: []
+db_stub.log_ai_interaction = lambda *args, **kwargs: None
+db_stub.update_ai_last_processed = lambda *args, **kwargs: None
+db_stub.update_chat_state = lambda *args, **kwargs: None
+sys.modules.setdefault("services.db", db_stub)
+
+requests_stub = types.ModuleType("requests")
+requests_stub.post = lambda *args, **kwargs: None
+requests_stub.get = lambda *args, **kwargs: None
+sys.modules.setdefault("requests", requests_stub)
+
+whatsapp_stub = types.ModuleType("services.whatsapp_api")
+whatsapp_stub.enviar_mensaje = lambda *args, **kwargs: True
+sys.modules.setdefault("services.whatsapp_api", whatsapp_stub)
+
 from services.ai_responder import CatalogResponder
 from services import ai_worker
+
+
+def _dummy_embeddings(texts):
+    return [[float(i + 1), 0.0, 0.0] for i in range(len(texts))]
 
 
 def test_build_prompt_includes_history_order():
@@ -116,3 +149,37 @@ def test_chunk_text_removes_bullets():
         "Cabaña Taypi con tina de hidromasaje",
         "Cabaña Inti con terraza",
     ]
+
+
+def test_ingest_text_generates_metadata(tmp_path, monkeypatch):
+    text_path = tmp_path / "catalogo.txt"
+    text_path.write_text("Suite Andina $120\nIncluye desayuno", encoding="utf-8")
+
+    base_index = tmp_path / "index" / "catalog"
+    media_root = tmp_path / "media"
+    pages_dir = tmp_path / "pages"
+    media_root.mkdir()
+    pages_dir.mkdir()
+
+    monkeypatch.setattr(ai_worker.Config, "AI_VECTOR_STORE_PATH", str(base_index))
+    monkeypatch.setattr(ai_worker.Config, "MEDIA_ROOT", str(media_root))
+    monkeypatch.setattr(ai_worker.Config, "AI_PAGE_IMAGE_DIR", str(pages_dir))
+
+    from services import ai_responder
+
+    monkeypatch.setattr(ai_responder.Config, "AI_VECTOR_STORE_PATH", str(base_index))
+    monkeypatch.setattr(ai_responder.Config, "MEDIA_ROOT", str(media_root))
+    monkeypatch.setattr(ai_responder.Config, "AI_PAGE_IMAGE_DIR", str(pages_dir))
+
+    monkeypatch.setattr(ai_responder, "update_ai_catalog_metadata", lambda stats: None)
+    monkeypatch.setattr(ai_responder, "set_ai_last_processed_to_latest", lambda: None)
+
+    responder = ai_responder.CatalogResponder()
+    monkeypatch.setattr(responder, "_embed_texts", _dummy_embeddings)
+
+    stats = responder.ingest_text(str(text_path), source_name="Catalogo TXT")
+
+    assert stats["chunks"] >= 1
+    assert responder._metadata
+    assert responder._metadata[0]["backend"] == "text"
+    assert responder._metadata[0]["source"] == "Catalogo TXT"
