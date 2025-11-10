@@ -46,14 +46,14 @@
 
 <div style="border:1px solid #e0e0e0;border-radius:8px;padding:16px;">
     <h3>Procesar catálogo</h3>
-    <p>El archivo (PDF o imagen) se convertirá en texto, se dividirá en fragmentos y se generarán embeddings con <code>{{ Config.AI_EMBED_MODEL }}</code>. El bot usará <code>{{ Config.AI_GEN_MODEL }}</code> para responder.</p>
+    <p>El archivo (PDF, imagen o texto plano) se convertirá en fragmentos de texto y se generarán embeddings con <code>{{ Config.AI_EMBED_MODEL }}</code>. El bot usará <code>{{ Config.AI_GEN_MODEL }}</code> para responder.</p>
     {% if not has_openai_key %}
     <p style="color:#c62828;">Configura la variable <code>OPENAI_API_KEY</code> antes de cargar el catálogo.</p>
     {% endif %}
     <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="action" value="ingest">
-        <label for="catalogo">Catálogo (PDF o imágenes):</label>
-        <input id="catalogo" name="catalogo" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple {% if not has_openai_key %}disabled{% endif %}>
+        <label for="catalogo">Catálogo (PDF, imágenes o TXT):</label>
+        <input id="catalogo" name="catalogo" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,text/plain,.txt" multiple {% if not has_openai_key %}disabled{% endif %}>
         <button class="btn-primary" type="submit" {% if not has_openai_key %}disabled{% endif %}>Procesar catálogo</button>
     </form>
     {% if ingest_status %}
