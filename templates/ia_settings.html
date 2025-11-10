@@ -52,8 +52,8 @@
     {% endif %}
     <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="action" value="ingest">
-        <label for="catalogo">Catálogo (PDF o imagen):</label>
-        <input id="catalogo" name="catalogo" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" {% if not has_openai_key %}disabled{% endif %}>
+        <label for="catalogo">Catálogo (PDF o imágenes):</label>
+        <input id="catalogo" name="catalogo" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple {% if not has_openai_key %}disabled{% endif %}>
         <button class="btn-primary" type="submit" {% if not has_openai_key %}disabled{% endif %}>Procesar catálogo</button>
     </form>
     {% if ingest_status %}

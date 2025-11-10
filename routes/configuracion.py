@@ -378,20 +378,22 @@ def ia_settings():
             elif ingest_status.get('state') == 'running':
                 error = 'Ya hay un catálogo en procesamiento. Espera a que termine antes de subir uno nuevo.'
             else:
-                file = request.files.get('catalogo')
-                if not file or not file.filename:
-                    error = 'Adjunta un archivo PDF o una imagen válida.'
+                files = [f for f in request.files.getlist('catalogo') if f and f.filename]
+                if not files:
+                    error = 'Adjunta al menos un archivo PDF o una imagen válida.'
                 else:
-                    filename = secure_filename(file.filename)
-                    extension = os.path.splitext(filename)[1].lower()
                     allowed_images = {'.png', '.jpg', '.jpeg', '.webp'}
                     allowed_pdf = '.pdf'
                     allowed_extensions = allowed_images | {allowed_pdf}
-                    if extension not in allowed_extensions:
-                        error = 'Adjunta un archivo PDF o una imagen válida (.pdf, .png, .jpg, .jpeg, .webp).'
-                    else:
-                        ingest_path = None
-                        try:
+                    ingest_path = None
+                    filename = None
+                    try:
+                        if len(files) == 1:
+                            file = files[0]
+                            filename = secure_filename(file.filename)
+                            extension = os.path.splitext(filename)[1].lower()
+                            if extension not in allowed_extensions:
+                                raise ValueError('Adjunta un archivo PDF o una imagen válida (.pdf, .png, .jpg, .jpeg, .webp).')
                             if extension == allowed_pdf:
                                 unique_name = f"{uuid.uuid4().hex}_{filename}"
                                 ingest_path = os.path.join(Config.CATALOG_UPLOAD_DIR, unique_name)
@@ -420,31 +422,72 @@ def ia_settings():
                                         )
                                 except UnidentifiedImageError:
                                     raise ValueError('Adjunta un archivo de imagen válido (.png, .jpg, .jpeg, .webp).')
-                        except ValueError as exc:
-                            error = str(exc)
-                            if ingest_path and os.path.exists(ingest_path):
-                                os.remove(ingest_path)
-                        except Exception as exc:
-                            logging.exception("Error al preparar el catálogo para la ingesta")
-                            error = f"No se pudo preparar el catálogo: {exc}"
-                            if ingest_path and os.path.exists(ingest_path):
-                                os.remove(ingest_path)
                         else:
-                            try:
-                                start_catalog_ingest(responder, ingest_path, filename)
-                                message = (
-                                    "Catálogo recibido. El procesamiento continuará en segundo plano; "
-                                    "recarga la página para ver el resultado."
+                            # Combina múltiples imágenes en un único PDF temporal
+                            invalid = []
+                            for f in files:
+                                extension = os.path.splitext(f.filename or '')[1].lower()
+                                if extension not in allowed_images:
+                                    invalid.append(f.filename or '?')
+                            if invalid:
+                                raise ValueError(
+                                    'Solo se permiten imágenes con extensión .png, .jpg, .jpeg o .webp cuando subes varios archivos.'
                                 )
-                            except RuntimeError as exc:
-                                error = str(exc)
-                            except Exception as exc:
-                                logging.exception("Error al encolar el procesamiento del catálogo")
-                                error = f"No se pudo procesar el catálogo: {exc}"
-                            finally:
-                                if error and ingest_path and os.path.exists(ingest_path):
-                                    os.remove(ingest_path)
-                        ingest_status = get_catalog_ingest_status()
+                            display_name = files[0].filename or 'catalogo'
+                            if len(files) > 1:
+                                display_name = f"{display_name} (+{len(files) - 1})"
+                            unique_name = f"{uuid.uuid4().hex}_{secure_filename(files[0].filename or 'catalogo')}.pdf"
+                            ingest_path = os.path.join(Config.CATALOG_UPLOAD_DIR, unique_name)
+                            frames = []
+                            for uploaded in files:
+                                try:
+                                    uploaded.stream.seek(0)
+                                except Exception:
+                                    pass
+                                try:
+                                    with Image.open(uploaded.stream) as image:
+                                        if getattr(image, "n_frames", 1) > 1:
+                                            for frame in ImageSequence.Iterator(image):
+                                                frames.append(frame.convert("RGB"))
+                                        else:
+                                            frames.append(image.convert("RGB"))
+                                except UnidentifiedImageError:
+                                    raise ValueError('Adjunta archivos de imagen válidos (.png, .jpg, .jpeg, .webp).')
+                            if not frames:
+                                raise ValueError('No se pudieron preparar las imágenes para la ingesta.')
+                            first_frame, *rest = frames
+                            first_frame.save(
+                                ingest_path,
+                                format="PDF",
+                                save_all=bool(rest),
+                                append_images=rest,
+                            )
+                            filename = display_name
+                    except ValueError as exc:
+                        error = str(exc)
+                        if ingest_path and os.path.exists(ingest_path):
+                            os.remove(ingest_path)
+                    except Exception as exc:
+                        logging.exception("Error al preparar el catálogo para la ingesta")
+                        error = f"No se pudo preparar el catálogo: {exc}"
+                        if ingest_path and os.path.exists(ingest_path):
+                            os.remove(ingest_path)
+                    else:
+                        try:
+                            start_catalog_ingest(responder, ingest_path, filename)
+                            message = (
+                                "Catálogo recibido. El procesamiento continuará en segundo plano; "
+                                "recarga la página para ver el resultado."
+                            )
+                        except RuntimeError as exc:
+                            error = str(exc)
+                        except Exception as exc:
+                            logging.exception("Error al encolar el procesamiento del catálogo")
+                            error = f"No se pudo procesar el catálogo: {exc}"
+                        finally:
+                            if error and ingest_path and os.path.exists(ingest_path):
+                                os.remove(ingest_path)
+                    ingest_status = get_catalog_ingest_status()
         else:
             error = 'Acción no soportada.'
 
