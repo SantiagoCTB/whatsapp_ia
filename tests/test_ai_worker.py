@@ -284,6 +284,55 @@ def test_send_reference_images_uses_catalog_entry_with_matching_phrase(monkeypat
     assert first["opciones"] == "https://example.com/condor.jpg"
 
 
+def test_send_reference_images_uses_question_tokens_for_entity(monkeypatch):
+    ai_worker._catalog_media_index = [
+        {
+            "media_url": "https://example.com/taypi.jpg",
+            "tokens": {"cabana", "taypi"},
+            "step": Config.AI_HANDOFF_STEP,
+            "normalized": "cabana taypi",
+            "label": "Cabaña Taypi",
+        },
+        {
+            "media_url": "https://example.com/tunupa.jpg",
+            "tokens": {"cabana", "tunupa"},
+            "step": Config.AI_HANDOFF_STEP,
+            "normalized": "cabana tunupa",
+            "label": "Cabaña Tunúpa",
+        },
+    ]
+
+    worker = ai_worker.AIWorker()
+
+    sent_messages: List[Dict[str, object]] = []
+
+    def fake_send(numero, mensaje, **kwargs):
+        sent_messages.append({"numero": numero, "mensaje": mensaje, **kwargs})
+        return True
+
+    monkeypatch.setattr(ai_worker, "enviar_mensaje", fake_send)
+
+    references = [
+        {
+            "text": "Cabaña Taypi con jacuzzi privado",
+            "score": 0.8,
+            "image_url": "https://example.com/taypi.jpg",
+        }
+    ]
+
+    worker._send_reference_images(
+        "+521234000003",
+        "Lo siento, no encuentro esa información en el catálogo.",
+        references,
+        question_text="¿Qué incluye la Cabaña Tunúpa?",
+    )
+
+    assert sent_messages, "Se esperaba que se eligiera una imagen relevante"
+    first = sent_messages[0]
+    assert first["tipo_respuesta"] == "image"
+    assert first["opciones"] == "https://example.com/tunupa.jpg"
+
+
 def teardown_module(module):  # pragma: no cover - limpieza defensiva
     for name, stub in (
         ("services.ai_responder", ai_responder_stub),

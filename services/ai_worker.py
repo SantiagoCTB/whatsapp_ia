@@ -6,6 +6,11 @@ from urllib.parse import urljoin
 
 from config import Config
 from services.ai_responder import get_catalog_responder
+from services.catalog_entities import (
+    collect_normalized_tokens,
+    find_entities_in_text,
+    score_fields_against_entities,
+)
 from services import db as db_module
 
 AI_BLOCKED_STATE = getattr(db_module, "AI_BLOCKED_STATE", "ia_bloqueada")
@@ -219,7 +224,12 @@ class AIWorker(threading.Thread):
                         )
                         if enviado:
                             try:
-                                self._send_reference_images(numero, answer, references)
+                                self._send_reference_images(
+                                    numero,
+                                    answer,
+                                    references,
+                                    question_text=texto,
+                                )
                             except Exception:
                                 logging.warning(
                                     "No se pudieron enviar las imágenes de referencia para %s",
@@ -239,7 +249,12 @@ class AIWorker(threading.Thread):
                             )
                             if enviado:
                                 try:
-                                    self._send_reference_images(numero, fallback, references)
+                                    self._send_reference_images(
+                                        numero,
+                                        fallback,
+                                        references,
+                                        question_text=texto,
+                                    )
                                 except Exception:
                                     logging.warning(
                                         "No se pudieron enviar las imágenes de referencia para %s",
@@ -256,21 +271,25 @@ class AIWorker(threading.Thread):
         numero: str,
         answer_text: Optional[str],
         references: List[Dict[str, object]],
+        *,
+        question_text: Optional[str] = None,
     ) -> None:
-        if not references or not answer_text:
+        if not references and not question_text:
+            return
+        if not (answer_text or question_text):
             return
 
-        normalized_answer = normalize_text(answer_text)
-        if not normalized_answer:
-            return
+        normalized_answer = normalize_text(answer_text or "")
+        normalized_question = normalize_text(question_text or "")
+        normalized_answer_phrase = f" {normalized_answer} " if normalized_answer else ""
+        normalized_question_phrase = f" {normalized_question} " if normalized_question else ""
+        combined_tokens = collect_normalized_tokens(answer_text or "", question_text or "")
 
-        normalized_answer = " ".join(normalized_answer.split())
-        answer_tokens = set(normalized_answer.split())
-        if not answer_tokens:
-            return
-
-        normalized_answer_phrase = f" {normalized_answer} "
         ai_step_lower = (Config.AI_HANDOFF_STEP or "").strip().lower()
+
+        entity_matches = find_entities_in_text(question_text or "")
+        if not entity_matches and answer_text:
+            entity_matches = find_entities_in_text(answer_text)
 
         ranked: List[Tuple[int, float, Dict[str, object]]] = []
         for ref in references:
@@ -279,16 +298,28 @@ class AIWorker(threading.Thread):
             score_value = float(ref.get("score") or 0.0)
 
             match_points = 0
+            fields = [
+                ref.get("text"),
+                ref.get("source"),
+                ref.get("catalog_caption"),
+                " ".join(ref.get("skus") or []),
+            ]
+            if entity_matches:
+                entity_score = score_fields_against_entities(fields, entity_matches)
+                if entity_score <= 0:
+                    continue
+                match_points += entity_score * 10
+
             for sku in ref.get("skus") or []:
                 normalized_sku = normalize_text(str(sku))
-                if normalized_sku and normalized_sku in answer_tokens:
+                if normalized_sku and normalized_sku in combined_tokens:
                     match_points += 5
 
-            ref_text_tokens = set()
             normalized_ref_text = normalize_text(ref.get("text") or "")
             if normalized_ref_text:
-                ref_text_tokens = set(normalized_ref_text.split())
-                match_points += len(ref_text_tokens & answer_tokens)
+                ref_tokens = set(normalized_ref_text.split())
+                if combined_tokens:
+                    match_points += len(ref_tokens & combined_tokens)
 
             if match_points <= 0:
                 continue
@@ -327,18 +358,38 @@ class AIWorker(threading.Thread):
 
             full_phrase_matched = False
             if normalized_trigger:
-                full_phrase_matched = f" {normalized_trigger} " in normalized_answer_phrase
+                if normalized_answer_phrase and f" {normalized_trigger} " in normalized_answer_phrase:
+                    full_phrase_matched = True
+                elif normalized_question_phrase and f" {normalized_trigger} " in normalized_question_phrase:
+                    full_phrase_matched = True
 
-            common_tokens = entry_tokens & answer_tokens
-            if not common_tokens:
-                continue
+            common_tokens = entry_tokens & combined_tokens if combined_tokens else set()
 
-            required_matches = 1 if len(entry_tokens) == 1 else min(len(entry_tokens), 2)
-            if len(common_tokens) < required_matches:
-                continue
-
-            if not full_phrase_matched and entry_tokens and common_tokens != entry_tokens:
-                continue
+            entry_match_points = 0
+            if entity_matches:
+                entry_fields = [
+                    entry.get("label"),
+                    entry.get("raw"),
+                    entry.get("respuesta"),
+                    " ".join(entry_tokens),
+                ]
+                entity_score = score_fields_against_entities(entry_fields, entity_matches)
+                if entity_score <= 0:
+                    continue
+                entry_match_points = max(entity_score * 10, 5)
+                if common_tokens:
+                    entry_match_points += len(common_tokens)
+            else:
+                if not common_tokens:
+                    continue
+                required_matches = 1 if len(entry_tokens) == 1 else min(len(entry_tokens), 2)
+                if len(common_tokens) < required_matches:
+                    continue
+                if not full_phrase_matched and entry_tokens and common_tokens != entry_tokens:
+                    continue
+                entry_match_points = max(len(common_tokens) * 10, 5)
+                if full_phrase_matched:
+                    entry_match_points += 5
 
             label = entry.get("label") or entry.get("raw")
             caption_text = (entry.get("respuesta") or "").strip() or label
@@ -350,51 +401,106 @@ class AIWorker(threading.Thread):
                 "catalog_caption": caption_text,
             }
 
-            match_points = max(len(common_tokens) * 10, 5)
-            ranked.append((match_points, 0.0, pseudo_ref))
+            ranked.append((entry_match_points, 0.0, pseudo_ref))
 
         if not ranked:
-            fallback_ranked: List[Tuple[int, float, Dict[str, object]]] = []
-            for order, ref in enumerate(references):
-                if not isinstance(ref, dict):
-                    continue
-                media_payload = self._resolve_reference_media(ref)
-                if not media_payload:
-                    continue
-                dedupe_key = (
-                    media_payload.get("link")
-                    or media_payload.get("path")
-                    or media_payload.get("id")
-                )
-                if not dedupe_key:
-                    continue
-                try:
-                    score_value = float(ref.get("score"))
-                except (TypeError, ValueError):
-                    score_value = float("inf")
-                fallback_ranked.append((order, score_value, ref))
-
-            if not fallback_ranked:
-                for entry in catalog_entries:
-                    image_url = entry.get("media_url")
-                    if not image_url:
+            if entity_matches:
+                entity_fallback: List[Tuple[int, Dict[str, object]]] = []
+                for ref in references:
+                    if not isinstance(ref, dict):
                         continue
-                    label = entry.get("label") or entry.get("raw")
-                    caption_text = (entry.get("respuesta") or "").strip() or label
-                    pseudo_ref = {
-                        "image_url": image_url,
-                        "source": label,
-                        "text": entry.get("raw") or label,
-                        "skus": [],
-                        "catalog_caption": caption_text,
-                    }
-                    ranked = [(0, 0.0, pseudo_ref)]
-                    break
-                else:
-                    return
+                    fields = [
+                        ref.get("text"),
+                        ref.get("source"),
+                        ref.get("catalog_caption"),
+                    ]
+                    entity_score = score_fields_against_entities(fields, entity_matches)
+                    if entity_score <= 0:
+                        continue
+                    entity_fallback.append((entity_score * 10, ref))
 
-            fallback_ranked.sort(key=lambda item: (item[1], item[0]))
-            ranked = [(0, score, ref) for _, score, ref in fallback_ranked]
+                if not entity_fallback:
+                    entry_candidates: List[Tuple[int, Dict[str, object]]] = []
+                    for entry in catalog_entries:
+                        image_url = entry.get("media_url")
+                        if not image_url:
+                            continue
+                        entry_tokens = entry.get("tokens") or set()
+                        if not isinstance(entry_tokens, set):
+                            try:
+                                entry_tokens = set(entry_tokens)
+                            except TypeError:
+                                continue
+                        entry_fields = [
+                            entry.get("label"),
+                            entry.get("raw"),
+                            entry.get("respuesta"),
+                            " ".join(entry_tokens),
+                        ]
+                        entity_score = score_fields_against_entities(entry_fields, entity_matches)
+                        if entity_score <= 0:
+                            continue
+                        label = entry.get("label") or entry.get("raw")
+                        caption_text = (entry.get("respuesta") or "").strip() or label
+                        pseudo_ref = {
+                            "image_url": image_url,
+                            "source": label,
+                            "text": entry.get("raw") or label,
+                            "skus": [],
+                            "catalog_caption": caption_text,
+                        }
+                        entry_candidates.append((entity_score * 10, pseudo_ref))
+
+                    if not entry_candidates:
+                        return
+
+                    entry_candidates.sort(key=lambda item: -item[0])
+                    ranked = [(score, 0.0, ref) for score, ref in entry_candidates]
+                else:
+                    entity_fallback.sort(key=lambda item: -item[0])
+                    ranked = [(score, 0.0, ref) for score, ref in entity_fallback]
+            else:
+                fallback_ranked: List[Tuple[int, float, Dict[str, object]]] = []
+                for order, ref in enumerate(references):
+                    if not isinstance(ref, dict):
+                        continue
+                    media_payload = self._resolve_reference_media(ref)
+                    if not media_payload:
+                        continue
+                    dedupe_key = (
+                        media_payload.get("link")
+                        or media_payload.get("path")
+                        or media_payload.get("id")
+                    )
+                    if not dedupe_key:
+                        continue
+                    try:
+                        score_value = float(ref.get("score"))
+                    except (TypeError, ValueError):
+                        score_value = float("inf")
+                    fallback_ranked.append((order, score_value, ref))
+
+                if not fallback_ranked:
+                    for entry in catalog_entries:
+                        image_url = entry.get("media_url")
+                        if not image_url:
+                            continue
+                        label = entry.get("label") or entry.get("raw")
+                        caption_text = (entry.get("respuesta") or "").strip() or label
+                        pseudo_ref = {
+                            "image_url": image_url,
+                            "source": label,
+                            "text": entry.get("raw") or label,
+                            "skus": [],
+                            "catalog_caption": caption_text,
+                        }
+                        ranked = [(0, 0.0, pseudo_ref)]
+                        break
+                    else:
+                        return
+
+                fallback_ranked.sort(key=lambda item: (item[1], item[0]))
+                ranked = [(0, score, ref) for _, score, ref in fallback_ranked]
         else:
             ranked.sort(key=lambda item: (-item[0], item[1]))
 
