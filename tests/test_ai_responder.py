@@ -90,3 +90,58 @@ def test_worker_passes_history(monkeypatch):
         {"role": "user", "content": "Hola"},
         {"role": "assistant", "content": "Hola, ¿en qué te apoyo?"},
     ]
+
+
+def test_chunk_text_splits_catalog_sections():
+    text = (
+        "Cabaña Tunúpa $780.000\n"
+        "Incluye desayuno americano.\n"
+        "Cabaña Cóndor $720.000\n"
+        "Vista al lago y chimenea."
+    )
+
+    chunks = CatalogResponder._chunk_text(text)
+
+    assert len(chunks) == 2
+    assert chunks[0].startswith("Cabaña Tunúpa")
+    assert chunks[1].startswith("Cabaña Cóndor")
+
+
+def test_chunk_text_removes_bullets():
+    text = "• Cabaña Taypi con tina de hidromasaje\n- Cabaña Inti con terraza"
+
+    chunks = CatalogResponder._chunk_text(text)
+
+    assert chunks == [
+        "Cabaña Taypi con tina de hidromasaje",
+        "Cabaña Inti con terraza",
+    ]
+
+
+def test_chunk_text_handles_unknown_names_with_prices():
+    text = (
+        "Paquete Familiar Premium $150.000\n"
+        "Incluye actividades guiadas y cena temática.\n"
+        "Suite Ejecutiva Deluxe $210.000\n"
+        "Acceso al spa y cóctel de bienvenida."
+    )
+
+    chunks = CatalogResponder._chunk_text(text)
+
+    assert len(chunks) == 2
+    assert chunks[0].startswith("Paquete Familiar Premium $150.000")
+    assert chunks[1].startswith("Suite Ejecutiva Deluxe $210.000")
+
+
+def test_chunk_text_keeps_multiple_prices_same_product():
+    text = (
+        "Habitación Andina\n"
+        "Tarifa referencial $180.000\n"
+        "Tarifa promoción $150.000\n"
+        "Incluye desayuno buffet."
+    )
+
+    chunks = CatalogResponder._chunk_text(text)
+
+    assert len(chunks) == 1
+    assert "Tarifa promoción $150.000" in chunks[0]

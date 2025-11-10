@@ -54,6 +54,23 @@ from services.db import (
 
 SKU_PATTERN = re.compile(r"\bSKU[:\s-]*([A-Z0-9-]{3,})\b", re.IGNORECASE)
 
+_SECTION_PRICE_PATTERN = re.compile(
+    r"(?i)(?:[$€£¥]|USD|EUR|MXN|COP|CLP|ARS|S/\.?|Bs\.?|PEN|UYU|GTQ|BOB|\b\d{1,3}(?:[.,]\d{3}){1,}\b|\b\d+[.,]\d{2}\b)"
+)
+
+_SECTION_SUPPLEMENT_PREFIXES = (
+    "tarifa",
+    "precio",
+    "promoción",
+    "promocion",
+    "desde",
+    "por noche",
+    "por persona",
+    "adulto",
+    "niño",
+    "nino",
+)
+
 
 _CATALOG_NAME_BULLETS = "".join(f"- {name}\n" for name in get_known_entity_names())
 
@@ -548,12 +565,85 @@ class CatalogResponder:
 
     @staticmethod
     def _chunk_text(text: str) -> List[str]:
-        """Normaliza el texto de una página y lo devuelve como un solo fragmento."""
+        """Divide el texto en fragmentos más pequeños manteniendo el contexto."""
 
-        cleaned = re.sub(r"\s+", " ", text or "").strip()
-        if not cleaned:
+        if not text:
             return []
-        return [cleaned]
+
+        normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        segments: List[str] = []
+        buffer: List[str] = []
+        current_chunk_has_header = False
+
+        def flush_buffer() -> None:
+            nonlocal current_chunk_has_header
+            if not buffer:
+                return
+            combined = re.sub(r"\s+", " ", " ".join(buffer)).strip()
+            if combined:
+                segments.append(combined)
+            buffer.clear()
+            current_chunk_has_header = False
+
+        for raw_line in normalized.split("\n"):
+            stripped = raw_line.strip()
+            if not stripped:
+                flush_buffer()
+                continue
+
+            # Quita viñetas comunes y fuerza un nuevo fragmento para separar secciones.
+            bullet_stripped = re.sub(r"^[\u2022•·\-–—]+\s*", "", stripped)
+            if bullet_stripped != stripped:
+                flush_buffer()
+                stripped = bullet_stripped
+
+            # Determina si la línea parece iniciar una nueva sección del catálogo.
+            is_known_entity = bool(find_entities_in_text(stripped))
+            is_section_header = is_known_entity or CatalogResponder._looks_like_section_header(stripped)
+
+            if buffer and is_section_header and current_chunk_has_header:
+                flush_buffer()
+
+            buffer.append(stripped)
+            if is_section_header:
+                current_chunk_has_header = True
+
+        flush_buffer()
+        return segments
+
+    @staticmethod
+    def _looks_like_section_header(line: str) -> bool:
+        """Heurística para detectar encabezados de productos."""
+
+        if not line:
+            return False
+
+        # Evita cortar en descripciones largas.
+        if len(line) > 160:
+            return False
+
+        # Líneas que terminan en punto suelen ser descripciones.
+        if line.endswith(('.', ';', ':', ',')):
+            return False
+
+        # Detecta precios y monedas comunes.
+        if _SECTION_PRICE_PATTERN.search(line):
+            lowered = line.lower()
+            if lowered.startswith(_SECTION_SUPPLEMENT_PREFIXES):
+                return False
+            return True
+
+        # Detecta SKU explícito al inicio.
+        if SKU_PATTERN.search(line):
+            return True
+
+        tokens = [tok for tok in re.split(r"\s+", line) if tok]
+        if len(tokens) <= 2:
+            return True
+
+        capitalized_tokens = sum(1 for tok in tokens if tok[:1].isalpha() and tok[:1].isupper())
+        # Si la mayoría de tokens empiezan con mayúscula, se asemeja a un título.
+        return capitalized_tokens >= max(2, len(tokens) // 2)
 
     @staticmethod
     def _extract_skus(text: str) -> List[str]:
