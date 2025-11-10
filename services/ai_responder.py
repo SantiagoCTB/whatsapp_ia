@@ -539,22 +539,13 @@ class CatalogResponder:
         return image
 
     @staticmethod
-    def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 200) -> List[str]:
+    def _chunk_text(text: str) -> List[str]:
+        """Normaliza el texto de una página y lo devuelve como un solo fragmento."""
+
         cleaned = re.sub(r"\s+", " ", text or "").strip()
         if not cleaned:
             return []
-        chunks: List[str] = []
-        start = 0
-        length = len(cleaned)
-        while start < length:
-            end = min(length, start + chunk_size)
-            chunk = cleaned[start:end]
-            if chunk:
-                chunks.append(chunk)
-            if end >= length:
-                break
-            start = max(0, end - overlap)
-        return chunks
+        return [cleaned]
 
     @staticmethod
     def _extract_skus(text: str) -> List[str]:
