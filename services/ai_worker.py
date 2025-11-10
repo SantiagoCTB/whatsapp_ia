@@ -264,9 +264,13 @@ class AIWorker(threading.Thread):
         if not normalized_answer:
             return
 
+        normalized_answer = " ".join(normalized_answer.split())
         answer_tokens = set(normalized_answer.split())
         if not answer_tokens:
             return
+
+        normalized_answer_phrase = f" {normalized_answer} "
+        ai_step_lower = (Config.AI_HANDOFF_STEP or "").strip().lower()
 
         ranked: List[Tuple[int, float, Dict[str, object]]] = []
         for ref in references:
@@ -291,7 +295,17 @@ class AIWorker(threading.Thread):
 
             ranked.append((match_points, score_value, ref))
 
-        catalog_entries = _get_catalog_media_index()
+        raw_catalog_entries = _get_catalog_media_index()
+        catalog_entries: List[Dict[str, object]] = []
+        for entry in raw_catalog_entries:
+            if not isinstance(entry, dict):
+                continue
+            entry_step_raw = entry.get("step")
+            entry_step = str(entry_step_raw).strip().lower() if entry_step_raw else ""
+            if entry_step and ai_step_lower and entry_step != ai_step_lower:
+                continue
+            catalog_entries.append(entry)
+
         for entry in catalog_entries:
             image_url = entry.get("media_url")
             if not image_url:
@@ -306,12 +320,24 @@ class AIWorker(threading.Thread):
             if not entry_tokens:
                 continue
 
+            normalized_trigger = ""
+            trigger_value = entry.get("normalized")
+            if isinstance(trigger_value, str):
+                normalized_trigger = trigger_value.strip()
+
+            full_phrase_matched = False
+            if normalized_trigger:
+                full_phrase_matched = f" {normalized_trigger} " in normalized_answer_phrase
+
             common_tokens = entry_tokens & answer_tokens
             if not common_tokens:
                 continue
 
             required_matches = 1 if len(entry_tokens) == 1 else min(len(entry_tokens), 2)
             if len(common_tokens) < required_matches:
+                continue
+
+            if not full_phrase_matched and entry_tokens and common_tokens != entry_tokens:
                 continue
 
             label = entry.get("label") or entry.get("raw")
