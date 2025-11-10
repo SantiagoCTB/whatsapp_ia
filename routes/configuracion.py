@@ -380,22 +380,33 @@ def ia_settings():
             else:
                 files = [f for f in request.files.getlist('catalogo') if f and f.filename]
                 if not files:
-                    error = 'Adjunta al menos un archivo PDF o una imagen válida.'
+                    error = 'Adjunta al menos un archivo PDF, de imagen o de texto.'
                 else:
                     allowed_images = {'.png', '.jpg', '.jpeg', '.webp'}
                     allowed_pdf = '.pdf'
-                    allowed_extensions = allowed_images | {allowed_pdf}
+                    allowed_text = {'.txt'}
+                    allowed_extensions = allowed_images | {allowed_pdf} | allowed_text
                     ingest_path = None
                     filename = None
+                    ingest_type = 'pdf'
                     try:
                         if len(files) == 1:
                             file = files[0]
                             filename = secure_filename(file.filename)
                             extension = os.path.splitext(filename)[1].lower()
+                            if not filename:
+                                filename = f"catalogo{extension or ''}"
                             if extension not in allowed_extensions:
-                                raise ValueError('Adjunta un archivo PDF o una imagen válida (.pdf, .png, .jpg, .jpeg, .webp).')
+                                raise ValueError(
+                                    'Adjunta un archivo PDF, de imagen o de texto válido (.pdf, .png, .jpg, .jpeg, .webp, .txt).'
+                                )
                             if extension == allowed_pdf:
                                 unique_name = f"{uuid.uuid4().hex}_{filename}"
+                                ingest_path = os.path.join(Config.CATALOG_UPLOAD_DIR, unique_name)
+                                file.save(ingest_path)
+                            elif extension in allowed_text:
+                                ingest_type = 'text'
+                                unique_name = f"{uuid.uuid4().hex}_{filename or 'catalogo.txt'}"
                                 ingest_path = os.path.join(Config.CATALOG_UPLOAD_DIR, unique_name)
                                 file.save(ingest_path)
                             else:
@@ -474,7 +485,7 @@ def ia_settings():
                             os.remove(ingest_path)
                     else:
                         try:
-                            start_catalog_ingest(responder, ingest_path, filename)
+                            start_catalog_ingest(responder, ingest_path, filename, ingest_type)
                             message = (
                                 "Catálogo recibido. El procesamiento continuará en segundo plano; "
                                 "recarga la página para ver el resultado."

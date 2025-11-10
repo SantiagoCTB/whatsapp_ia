@@ -2,6 +2,7 @@ import json
 import inspect
 import logging
 import os
+import pickle
 import subprocess
 import threading
 import hashlib
@@ -9,10 +10,109 @@ import re
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
-import faiss
-import numpy as np
-from openai import OpenAI
-from pypdf import PdfReader
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - fallback sin NumPy
+    np = None  # type: ignore[assignment]
+
+try:
+    import faiss
+except Exception:  # pragma: no cover - fallback para entornos sin FAISS
+    class _ListIndex:
+        def __init__(self, dim: int) -> None:
+            self.dim = int(dim) if dim else 0
+            self._vectors: List[List[float]] = []
+
+        def add(self, matrix: List[List[float]]) -> None:
+            for row in matrix:
+                values = [float(x) for x in row]
+                if not values:
+                    continue
+                if self.dim and len(values) != self.dim:
+                    raise ValueError("Dimensión incompatible para el índice")
+                if not self.dim:
+                    self.dim = len(values)
+                self._vectors.append(values)
+
+        def search(self, queries: List[List[float]], k: int) -> Tuple[List[List[float]], List[List[int]]]:
+            query_vectors: List[List[float]] = []
+            for row in queries:
+                values = [float(x) for x in row]
+                if self.dim and values and len(values) != self.dim:
+                    raise ValueError("Dimensión incompatible para la consulta")
+                if not values and self.dim:
+                    values = [0.0] * self.dim
+                query_vectors.append(values)
+
+            if not self._vectors:
+                distances = [[float("inf")] * k for _ in query_vectors]
+                indices = [[-1] * k for _ in query_vectors]
+                return distances, indices
+
+            all_distances: List[List[float]] = []
+            all_indices: List[List[int]] = []
+            for q in query_vectors:
+                scored = [
+                    (
+                        sum((float(a) - float(b)) ** 2 for a, b in zip(q, vec)),
+                        idx,
+                    )
+                    for idx, vec in enumerate(self._vectors)
+                ]
+                scored.sort(key=lambda item: item[0])
+                top = scored[:k]
+                pad = max(0, k - len(top))
+                all_distances.append([float(score) for score, _ in top] + [float("inf")] * pad)
+                all_indices.append([idx for _, idx in top] + [-1] * pad)
+            return all_distances, all_indices
+
+        @property
+        def ntotal(self) -> int:
+            return len(self._vectors)
+
+    class _SimpleFaissModule:
+        IndexFlatL2 = _ListIndex
+        Index = _ListIndex
+
+        @staticmethod
+        def write_index(index: _ListIndex, path: str) -> None:
+            payload = {"dim": index.dim, "vectors": index._vectors}
+            with open(path, "wb") as fh:
+                pickle.dump(payload, fh)
+
+        @staticmethod
+        def read_index(path: str) -> _ListIndex:
+            with open(path, "rb") as fh:
+                payload = pickle.load(fh)
+            dim = int(payload.get("dim") or 0)
+            idx = _ListIndex(dim)
+            vectors = payload.get("vectors") or []
+            if isinstance(vectors, list):
+                idx.add(vectors)
+            return idx
+
+    faiss = _SimpleFaissModule()  # type: ignore[assignment]
+try:
+    from openai import OpenAI
+except Exception:  # pragma: no cover - fallback sin SDK oficial
+    class OpenAI:  # type: ignore[override]
+        def __init__(self, *_, **__):
+            self.embeddings = self._EndpointStub("embeddings")
+            self.responses = self._EndpointStub("responses")
+
+        class _EndpointStub:
+            def __init__(self, name: str) -> None:
+                self._name = name
+
+            def create(self, *_, **__):
+                raise RuntimeError(f"El SDK de OpenAI no está disponible para {self._name}.")
+
+try:
+    from pypdf import PdfReader
+except Exception:  # pragma: no cover - fallback mínimo
+    class PdfReader:  # type: ignore[override]
+        def __init__(self, *_, **__):
+            raise RuntimeError("pypdf no está instalado.")
 
 try:
     import pypdfium2 as pdfium
@@ -45,11 +145,21 @@ from services.catalog_entities import (
     get_known_entity_names,
     score_fields_against_entities,
 )
-from services.db import (
-    log_ai_interaction,
-    set_ai_last_processed_to_latest,
-    update_ai_catalog_metadata,
-)
+try:
+    from services.db import (
+        log_ai_interaction,
+        set_ai_last_processed_to_latest,
+        update_ai_catalog_metadata,
+    )
+except Exception:  # pragma: no cover - fallback sin base de datos
+    def log_ai_interaction(*args, **kwargs):  # type: ignore[misc]
+        return None
+
+    def set_ai_last_processed_to_latest() -> None:  # type: ignore[misc]
+        return None
+
+    def update_ai_catalog_metadata(*args, **kwargs) -> None:  # type: ignore[misc]
+        return None
 
 
 SKU_PATTERN = re.compile(r"\bSKU[:\s-]*([A-Z0-9-]{3,})\b", re.IGNORECASE)
@@ -829,7 +939,14 @@ class CatalogResponder:
             if reader is not None:
                 backends_available = True
                 try:
-                    results = reader.readtext(np.array(pil_image_for_ocr), detail=0)
+                    if np is None:
+                        logging.warning(
+                            "EasyOCR requiere numpy para procesar imágenes; se omite este backend."
+                        )
+                        local_error = local_error or "easyocr_missing"
+                        results = []
+                    else:
+                        results = reader.readtext(np.array(pil_image_for_ocr), detail=0)
                     candidate = "\n".join(res.strip() for res in results if res and res.strip())
                     if candidate.strip():
                         backend_used = "easyocr"
@@ -865,6 +982,61 @@ class CatalogResponder:
         return self._build_stats(self._metadata)
 
     # --- flujo principal -----------------------------------------------------
+
+    def _commit_ingest(
+        self, metadata: List[Dict[str, object]], chunks: List[str]
+    ) -> Dict[str, object]:
+        if not chunks:
+            raise ValueError("El catálogo no contiene texto utilizable.")
+
+        embeddings: List[List[float]] = []
+        batch_size = 20
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
+            embeddings.extend(self._embed_texts(batch))
+
+        if np is not None:
+            matrix = np.array(embeddings, dtype="float32")
+            if getattr(matrix, "ndim", 0) != 2 or matrix.shape[0] == 0:
+                raise ValueError("No se generaron embeddings válidos.")
+            dim = int(matrix.shape[1])
+            data_to_index = matrix
+        else:
+            normalized_embeddings: List[List[float]] = []
+            dim = 0
+            for row in embeddings:
+                if not isinstance(row, (list, tuple)):
+                    continue
+                values = [float(x) for x in row]
+                if not values:
+                    continue
+                if dim and len(values) != dim:
+                    raise ValueError("No se generaron embeddings válidos.")
+                dim = len(values)
+                normalized_embeddings.append(values)
+            if not normalized_embeddings or dim == 0:
+                raise ValueError("No se generaron embeddings válidos.")
+            data_to_index = normalized_embeddings
+
+        index = faiss.IndexFlatL2(dim)
+        index.add(data_to_index)
+
+        with self._index_lock:
+            self._augment_metadata_with_images(metadata)
+            faiss.write_index(index, self._index_path)
+            with open(self._metadata_path, "w", encoding="utf-8") as fh:
+                json.dump(metadata, fh, ensure_ascii=False, indent=2)
+            self._index = index
+            self._metadata = metadata
+            self._last_mtime = max(
+                os.path.getmtime(self._index_path),
+                os.path.getmtime(self._metadata_path),
+            )
+
+        stats = self._build_stats(metadata)
+        update_ai_catalog_metadata(stats)
+        set_ai_last_processed_to_latest()
+        return stats
 
     def ingest_pdf(self, pdf_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
         """Procesa un PDF y reconstruye el índice FAISS."""
@@ -964,32 +1136,76 @@ class CatalogResponder:
                 )
             raise ValueError("El PDF no contiene texto utilizable.")
 
-        embeddings: List[List[float]] = []
-        batch_size = 20
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i : i + batch_size]
-            embeddings.extend(self._embed_texts(batch))
+        return self._commit_ingest(metadata, chunks)
 
-        matrix = np.array(embeddings, dtype="float32")
-        if matrix.ndim != 2 or matrix.shape[0] == 0:
-            raise ValueError("No se generaron embeddings válidos.")
+    def ingest_text(self, text_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
+        """Procesa un archivo de texto plano y reconstruye el índice FAISS."""
 
-        index = faiss.IndexFlatL2(matrix.shape[1])
-        index.add(matrix)
+        text_content = ""
+        last_error: Optional[Exception] = None
+        for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+            try:
+                with open(text_path, "r", encoding=encoding) as fh:
+                    text_content = fh.read()
+                break
+            except UnicodeDecodeError as exc:
+                last_error = exc
+                continue
+        else:
+            try:
+                with open(text_path, "r", encoding="utf-8", errors="ignore") as fh:
+                    text_content = fh.read()
+            except Exception as exc:  # pragma: no cover - lectura defensiva
+                raise exc from last_error or exc
 
-        with self._index_lock:
-            self._augment_metadata_with_images(metadata)
-            faiss.write_index(index, self._index_path)
-            with open(self._metadata_path, "w", encoding="utf-8") as fh:
-                json.dump(metadata, fh, ensure_ascii=False, indent=2)
-            self._index = index
-            self._metadata = metadata
-            self._last_mtime = max(os.path.getmtime(self._index_path), os.path.getmtime(self._metadata_path))
+        if not text_content or not text_content.strip():
+            raise ValueError("El archivo de texto está vacío o no contiene información útil.")
 
-        stats = self._build_stats(metadata)
-        update_ai_catalog_metadata(stats)
-        set_ai_last_processed_to_latest()
-        return stats
+        metadata: List[Dict[str, object]] = []
+        chunks: List[str] = []
+        source = source_name or os.path.basename(text_path)
+        for section_number, chunk in enumerate(self._chunk_text(text_content), start=1):
+            normalized = (chunk or "").strip()
+            if not normalized:
+                continue
+            metadata.append(
+                {
+                    "page": section_number,
+                    "chunk": 1,
+                    "text": normalized,
+                    "source": source,
+                    "skus": self._extract_skus(normalized),
+                    "backend": "text",
+                    "image": None,
+                    "image_url": None,
+                }
+            )
+            chunks.append(normalized)
+
+        if not chunks:
+            raise ValueError("El archivo de texto no contiene contenido utilizable.")
+
+        return self._commit_ingest(metadata, chunks)
+
+    def ingest_document(
+        self,
+        file_path: str,
+        source_name: Optional[str] = None,
+        file_type: Optional[str] = None,
+    ) -> Dict[str, object]:
+        """Procesa un archivo de catálogo según su tipo declarado."""
+
+        normalized = (file_type or "").strip().lower()
+        if not normalized:
+            normalized = os.path.splitext(file_path)[1].lower().lstrip(".")
+
+        if normalized in {"pdf", "application/pdf"}:
+            return self.ingest_pdf(file_path, source_name=source_name)
+
+        if normalized in {"txt", "text", "plain", "text/plain"}:
+            return self.ingest_text(file_path, source_name=source_name)
+
+        raise ValueError(f"Tipo de archivo no soportado para ingesta: {normalized or file_type}")
 
     def answer(
         self,
@@ -1040,7 +1256,10 @@ class CatalogResponder:
                 return answer, references
 
         query_embedding = self._embed_texts([normalized_question])[0]
-        query_vector = np.array([query_embedding], dtype="float32")
+        if np is not None:
+            query_vector = np.array([query_embedding], dtype="float32")
+        else:
+            query_vector = [[float(x) for x in query_embedding]]
 
         with self._index_lock:
             distances, indices = self._index.search(query_vector, min(top_k, len(self._metadata)))

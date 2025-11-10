@@ -1,4 +1,5 @@
 """Gestión de trabajos en segundo plano para ingesta de catálogos."""
+"""Gestión de trabajos en segundo plano para ingesta de catálogos."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ class _CatalogIngestState:
         self._status: Dict[str, object] = {
             "state": "idle",
             "source_name": None,
+            "file_type": None,
             "started_at": None,
             "finished_at": None,
             "error": None,
@@ -43,7 +45,13 @@ class _CatalogIngestState:
                 pass
         return status
 
-    def start_job(self, responder: CatalogResponder, pdf_path: str, source_name: str) -> None:
+    def start_job(
+        self,
+        responder: CatalogResponder,
+        file_path: str,
+        source_name: str,
+        file_type: str,
+    ) -> None:
         with self._lock:
             if self._future and not self._future.done():
                 raise RuntimeError("Ya existe un proceso de ingesta en ejecución.")
@@ -52,6 +60,7 @@ class _CatalogIngestState:
                 {
                     "state": "running",
                     "source_name": source_name,
+                    "file_type": file_type,
                     "started_at": datetime.utcnow().isoformat(),
                     "finished_at": None,
                     "error": None,
@@ -59,22 +68,35 @@ class _CatalogIngestState:
                 }
             )
 
-            future = self._executor.submit(self._run_ingest, responder, pdf_path, source_name)
-            future.add_done_callback(lambda fut: self._on_done(fut, pdf_path, source_name))
+            future = self._executor.submit(
+                self._run_ingest, responder, file_path, source_name, file_type
+            )
+            future.add_done_callback(
+                lambda fut: self._on_done(fut, file_path, source_name, file_type)
+            )
             self._future = future
 
     def _run_ingest(
         self,
         responder: CatalogResponder,
-        pdf_path: str,
+        file_path: str,
         source_name: str,
+        file_type: str,
     ) -> ExecutorResult:
-        stats = responder.ingest_pdf(pdf_path, source_name=source_name)
+        stats = responder.ingest_document(
+            file_path, source_name=source_name, file_type=file_type
+        )
         return {
             "stats": stats,
         }
 
-    def _on_done(self, future: Future[ExecutorResult], pdf_path: str, source_name: str) -> None:
+    def _on_done(
+        self,
+        future: Future[ExecutorResult],
+        file_path: str,
+        source_name: str,
+        file_type: str,
+    ) -> None:
         error: Optional[str] = None
         stats: Optional[Dict[str, object]] = None
         try:
@@ -85,10 +107,12 @@ class _CatalogIngestState:
             error = str(exc)
         finally:
             try:
-                if os.path.exists(pdf_path):
-                    os.remove(pdf_path)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
             except Exception:
-                logging.warning("No se pudo eliminar el archivo temporal %s", pdf_path, exc_info=True)
+                logging.warning(
+                    "No se pudo eliminar el archivo temporal %s", file_path, exc_info=True
+                )
 
         with self._lock:
             self._status.update(
@@ -97,6 +121,7 @@ class _CatalogIngestState:
                     "finished_at": datetime.utcnow().isoformat(),
                     "error": error,
                     "stats": stats,
+                    "file_type": file_type,
                 }
             )
 
@@ -104,9 +129,14 @@ class _CatalogIngestState:
 _state = _CatalogIngestState()
 
 
-def start_catalog_ingest(responder: CatalogResponder, pdf_path: str, source_name: str) -> None:
+def start_catalog_ingest(
+    responder: CatalogResponder,
+    file_path: str,
+    source_name: str,
+    file_type: str,
+) -> None:
     """Encola la ingesta del catálogo en un hilo de fondo."""
-    _state.start_job(responder, pdf_path, source_name)
+    _state.start_job(responder, file_path, source_name, file_type)
 
 
 def get_catalog_ingest_status() -> Dict[str, object]:
