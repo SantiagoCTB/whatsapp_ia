@@ -1,7 +1,4 @@
 """Gestión de trabajos en segundo plano para ingesta de catálogos."""
-"""Gestión de trabajos en segundo plano para ingesta de catálogos."""
-
-from __future__ import annotations
 
 import logging
 import os
@@ -47,7 +44,7 @@ class _CatalogIngestState:
 
     def start_job(
         self,
-        responder: CatalogResponder,
+        responder: "CatalogResponder",
         file_path: str,
         source_name: str,
         file_type: str,
@@ -78,7 +75,7 @@ class _CatalogIngestState:
 
     def _run_ingest(
         self,
-        responder: CatalogResponder,
+        responder: "CatalogResponder",
         file_path: str,
         source_name: str,
         file_type: str,
@@ -130,7 +127,7 @@ _state = _CatalogIngestState()
 
 
 def start_catalog_ingest(
-    responder: CatalogResponder,
+    responder: "CatalogResponder",
     file_path: str,
     source_name: str,
     file_type: str,
