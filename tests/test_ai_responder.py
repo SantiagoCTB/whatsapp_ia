@@ -90,3 +90,29 @@ def test_worker_passes_history(monkeypatch):
         {"role": "user", "content": "Hola"},
         {"role": "assistant", "content": "Hola, ¿en qué te apoyo?"},
     ]
+
+
+def test_chunk_text_splits_catalog_sections():
+    text = (
+        "Cabaña Tunúpa $780.000\n"
+        "Incluye desayuno americano.\n"
+        "Cabaña Cóndor $720.000\n"
+        "Vista al lago y chimenea."
+    )
+
+    chunks = CatalogResponder._chunk_text(text)
+
+    assert len(chunks) == 2
+    assert chunks[0].startswith("Cabaña Tunúpa")
+    assert chunks[1].startswith("Cabaña Cóndor")
+
+
+def test_chunk_text_removes_bullets():
+    text = "• Cabaña Taypi con tina de hidromasaje\n- Cabaña Inti con terraza"
+
+    chunks = CatalogResponder._chunk_text(text)
+
+    assert chunks == [
+        "Cabaña Taypi con tina de hidromasaje",
+        "Cabaña Inti con terraza",
+    ]
