@@ -54,6 +54,23 @@ from services.db import (
 
 SKU_PATTERN = re.compile(r"\bSKU[:\s-]*([A-Z0-9-]{3,})\b", re.IGNORECASE)
 
+_SECTION_PRICE_PATTERN = re.compile(
+    r"(?i)(?:[$€£¥]|USD|EUR|MXN|COP|CLP|ARS|S/\.?|Bs\.?|PEN|UYU|GTQ|BOB|\b\d{1,3}(?:[.,]\d{3}){1,}\b|\b\d+[.,]\d{2}\b)"
+)
+
+_SECTION_SUPPLEMENT_PREFIXES = (
+    "tarifa",
+    "precio",
+    "promoción",
+    "promocion",
+    "desde",
+    "por noche",
+    "por persona",
+    "adulto",
+    "niño",
+    "nino",
+)
+
 
 _CATALOG_NAME_BULLETS = "".join(f"- {name}\n" for name in get_known_entity_names())
 
