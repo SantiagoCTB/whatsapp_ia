@@ -1085,7 +1085,7 @@ class CatalogResponder:
             "Entrega la respuesta en español neutro y servicial, proponiendo opciones de productos.\n"
             "Responde en un único mensaje con frases muy concretas (máximo "
             f"{max(Config.AI_RESPONSE_MAX_SENTENCES, 1)} oraciones cortas). Evita listas extensas y despedidas largas.\n"
-            "Si el dato no aparece, informa que miraremos si existe.\n"
+            "Si el usuario lo pide, dile el valor por cada persona adicional para la instancia\n"
             "IMPORTANTE: Usa los nombres EXACTOS de las cabañas y habitaciones tal como aparecen en el catálogo.\n"
             "Los nombres correctos son:\n"
             f"{_CATALOG_NAME_BULLETS}"
