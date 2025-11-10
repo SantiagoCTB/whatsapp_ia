@@ -5,6 +5,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import types
 
+from typing import Dict, List
+
 import pytest
 
 # Stubs para evitar dependencias externas durante las pruebas
@@ -216,6 +218,70 @@ def test_send_reference_images_uses_fallback(monkeypatch):
     first = sent_messages[0]
     assert first["tipo_respuesta"] == "image"
     assert first["opciones"] == "https://example.com/b.jpg"
+
+
+def test_send_reference_images_skips_catalog_entries_from_other_step(monkeypatch):
+    ai_worker._catalog_media_index = [
+        {
+            "media_url": "https://example.com/incorrect.jpg",
+            "tokens": {"condor"},
+            "step": "otro",
+            "normalized": "cabana condor",
+        }
+    ]
+    worker = ai_worker.AIWorker()
+
+    sent_messages: List[Dict[str, object]] = []
+
+    def fake_send(numero, mensaje, **kwargs):
+        sent_messages.append({"numero": numero, "mensaje": mensaje, **kwargs})
+        return True
+
+    monkeypatch.setattr(ai_worker, "enviar_mensaje", fake_send)
+
+    references = [{"text": "Otra opción", "score": 0.9}]
+
+    worker._send_reference_images(
+        "+521234000001",
+        "Cabaña Cóndor disponible",
+        references,
+    )
+
+    assert sent_messages == []
+
+
+def test_send_reference_images_uses_catalog_entry_with_matching_phrase(monkeypatch):
+    ai_worker._catalog_media_index = [
+        {
+            "media_url": "https://example.com/condor.jpg",
+            "tokens": {"cabana", "condor"},
+            "step": Config.AI_HANDOFF_STEP,
+            "normalized": "cabana condor",
+            "label": "Cabaña Cóndor",
+        }
+    ]
+    worker = ai_worker.AIWorker()
+
+    sent_messages: List[Dict[str, object]] = []
+
+    def fake_send(numero, mensaje, **kwargs):
+        sent_messages.append({"numero": numero, "mensaje": mensaje, **kwargs})
+        return True
+
+    monkeypatch.setattr(ai_worker, "enviar_mensaje", fake_send)
+
+    references = [{"text": "Opción alternativa", "score": 0.9}]
+
+    worker._send_reference_images(
+        "+521234000002",
+        "Cabaña Cóndor disponible",
+        references,
+    )
+
+    assert sent_messages, "Se esperaba una imagen coincidente"
+    first = sent_messages[0]
+    assert first["tipo_respuesta"] == "image"
+    assert first["opciones"] == "https://example.com/condor.jpg"
 
 
 def teardown_module(module):  # pragma: no cover - limpieza defensiva
