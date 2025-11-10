@@ -573,17 +573,14 @@ class CatalogResponder:
         normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
         segments: List[str] = []
         buffer: List[str] = []
-        current_chunk_has_header = False
 
         def flush_buffer() -> None:
-            nonlocal current_chunk_has_header
             if not buffer:
                 return
             combined = re.sub(r"\s+", " ", " ".join(buffer)).strip()
             if combined:
                 segments.append(combined)
             buffer.clear()
-            current_chunk_has_header = False
 
         for raw_line in normalized.split("\n"):
             stripped = raw_line.strip()
@@ -597,53 +594,15 @@ class CatalogResponder:
                 flush_buffer()
                 stripped = bullet_stripped
 
-            # Determina si la línea parece iniciar una nueva sección del catálogo.
-            is_known_entity = bool(find_entities_in_text(stripped))
-            is_section_header = is_known_entity or CatalogResponder._looks_like_section_header(stripped)
-
-            if buffer and is_section_header and current_chunk_has_header:
+            # Si detectamos que la línea hace referencia a una entidad conocida,
+            # consideramos que comienza una nueva sección del catálogo.
+            if buffer and find_entities_in_text(stripped):
                 flush_buffer()
 
             buffer.append(stripped)
-            if is_section_header:
-                current_chunk_has_header = True
 
         flush_buffer()
         return segments
-
-    @staticmethod
-    def _looks_like_section_header(line: str) -> bool:
-        """Heurística para detectar encabezados de productos."""
-
-        if not line:
-            return False
-
-        # Evita cortar en descripciones largas.
-        if len(line) > 160:
-            return False
-
-        # Líneas que terminan en punto suelen ser descripciones.
-        if line.endswith(('.', ';', ':', ',')):
-            return False
-
-        # Detecta precios y monedas comunes.
-        if _SECTION_PRICE_PATTERN.search(line):
-            lowered = line.lower()
-            if lowered.startswith(_SECTION_SUPPLEMENT_PREFIXES):
-                return False
-            return True
-
-        # Detecta SKU explícito al inicio.
-        if SKU_PATTERN.search(line):
-            return True
-
-        tokens = [tok for tok in re.split(r"\s+", line) if tok]
-        if len(tokens) <= 2:
-            return True
-
-        capitalized_tokens = sum(1 for tok in tokens if tok[:1].isalpha() and tok[:1].isupper())
-        # Si la mayoría de tokens empiezan con mayúscula, se asemeja a un título.
-        return capitalized_tokens >= max(2, len(tokens) // 2)
 
     @staticmethod
     def _extract_skus(text: str) -> List[str]:
