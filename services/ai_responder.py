@@ -8,7 +8,7 @@ import threading
 import hashlib
 import re
 import difflib
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 
 try:
@@ -1172,6 +1172,8 @@ class CatalogResponder:
         sku_lookup: Dict[str, Dict[str, object]] = {}
         exact_text_lookup: Dict[str, Dict[str, object]] = {}
         similarity_candidates: List[Tuple[str, Dict[str, object]]] = []
+        page_fallbacks: List[Dict[str, object]] = []
+        seen_pages: Set[int] = set()
         for entry in pdf_metadata:
             skus = entry.get("skus") or []
             for sku in skus:
@@ -1187,6 +1189,11 @@ class CatalogResponder:
                 exact_text_lookup[normalized_text] = entry
             if normalized_text:
                 similarity_candidates.append((normalized_text, entry))
+
+            page_value = entry.get("page")
+            if isinstance(page_value, int) and page_value not in seen_pages:
+                page_fallbacks.append(entry)
+                seen_pages.add(page_value)
 
         text_content = ""
         last_error: Optional[Exception] = None
@@ -1242,6 +1249,10 @@ class CatalogResponder:
                         best_entry = candidate_entry
                 if best_entry and best_ratio >= similarity_threshold:
                     matched_entry = best_entry
+
+            if not matched_entry and page_fallbacks:
+                fallback_index = min(max(section_number - 1, 0), len(page_fallbacks) - 1)
+                matched_entry = page_fallbacks[fallback_index]
 
             image_path = None
             image_url = None
