@@ -1038,8 +1038,9 @@ class CatalogResponder:
         set_ai_last_processed_to_latest()
         return stats
 
-    def ingest_pdf(self, pdf_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
-        """Procesa un PDF y reconstruye el índice FAISS."""
+    def _collect_pdf_metadata(
+        self, pdf_path: str, source_name: Optional[str]
+    ) -> Tuple[List[Dict[str, object]], List[str], str]:
         reader = PdfReader(pdf_path)
         metadata: List[Dict[str, object]] = []
         chunks: List[str] = []
@@ -1113,8 +1114,8 @@ class CatalogResponder:
             if error_reason == "easyocr_missing":
                 raise ValueError(
                     "El PDF no contiene texto utilizable y EasyOCR no está disponible. Instala easyocr, descarga los modelos "
-                    "necesarios o activa AI_OCR_EASYOCR_DOWNLOAD_ENABLED=1 para permitir la descarga automática, o habilita otro "
-                    "motor OCR."
+                    "necesarios o activa AI_OCR_EASYOCR_DOWNLOAD_ENABLED=1 para permitir la descarga automática, o habilita otro"
+                    " motor OCR."
                 )
             if error_reason == "no_backend":
                 raise ValueError(
@@ -1136,6 +1137,11 @@ class CatalogResponder:
                 )
             raise ValueError("El PDF no contiene texto utilizable.")
 
+        return metadata, chunks, pdf_hash
+
+    def ingest_pdf(self, pdf_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
+        """Procesa un PDF y reconstruye el índice FAISS."""
+        metadata, chunks, _ = self._collect_pdf_metadata(pdf_path, source_name)
         return self._commit_ingest(metadata, chunks)
 
     def ingest_text(self, text_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
