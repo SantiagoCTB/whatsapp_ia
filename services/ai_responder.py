@@ -1220,11 +1220,6 @@ class CatalogResponder:
 
         entity_lookup = self._build_entity_lookup(pdf_metadata)
 
-            page_value = entry.get("page")
-            if isinstance(page_value, int) and page_value not in seen_pages:
-                page_fallbacks.append(entry)
-                seen_pages.add(page_value)
-
         text_content = ""
         last_error: Optional[Exception] = None
         for encoding in ("utf-8", "utf-8-sig", "latin-1"):
