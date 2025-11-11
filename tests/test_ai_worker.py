@@ -220,6 +220,43 @@ def test_send_reference_images_uses_fallback(monkeypatch):
     assert first["opciones"] == "https://example.com/b.jpg"
 
 
+def test_send_reference_images_uses_answer_tokens(monkeypatch):
+    ai_worker._catalog_media_index = []
+    worker = ai_worker.AIWorker()
+
+    sent_messages: List[Dict[str, object]] = []
+
+    def fake_send(numero, mensaje, **kwargs):
+        sent_messages.append({"numero": numero, "mensaje": mensaje, **kwargs})
+        return True
+
+    monkeypatch.setattr(ai_worker, "enviar_mensaje", fake_send)
+
+    references = [
+        {
+            "text": "Información general del hotel",
+            "score": 0.05,
+            "image_url": "https://example.com/general.jpg",
+        },
+        {
+            "text": "Cabaña Luna Azul con vista al lago",
+            "score": 0.2,
+            "image_url": "https://example.com/luna-azul.jpg",
+        },
+    ]
+
+    worker._send_reference_images(
+        "+521234000010",
+        "Te recomiendo la Cabaña Luna Azul para tu estancia.",
+        references,
+    )
+
+    assert sent_messages, "Se esperaba que se enviara la imagen más relevante"
+    first = sent_messages[0]
+    assert first["tipo_respuesta"] == "image"
+    assert first["opciones"] == "https://example.com/luna-azul.jpg"
+
+
 def test_send_reference_images_skips_catalog_entries_from_other_step(monkeypatch):
     ai_worker._catalog_media_index = [
         {

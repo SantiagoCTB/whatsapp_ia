@@ -283,13 +283,55 @@ class AIWorker(threading.Thread):
         normalized_question = normalize_text(question_text or "")
         normalized_answer_phrase = f" {normalized_answer} " if normalized_answer else ""
         normalized_question_phrase = f" {normalized_question} " if normalized_question else ""
-        combined_tokens = collect_normalized_tokens(answer_text or "", question_text or "")
+        answer_tokens = collect_normalized_tokens(answer_text or "")
+        question_tokens = collect_normalized_tokens(question_text or "")
+        combined_tokens = answer_tokens | question_tokens
 
         ai_step_lower = (Config.AI_HANDOFF_STEP or "").strip().lower()
 
         entity_matches = find_entities_in_text(question_text or "")
         if not entity_matches and answer_text:
             entity_matches = find_entities_in_text(answer_text)
+
+        raw_catalog_entries = _get_catalog_media_index()
+        catalog_entries: List[Dict[str, object]] = []
+        for entry in raw_catalog_entries:
+            if not isinstance(entry, dict):
+                continue
+            entry_step_raw = entry.get("step")
+            entry_step = str(entry_step_raw).strip().lower() if entry_step_raw else ""
+            if entry_step and ai_step_lower and entry_step != ai_step_lower:
+                continue
+            entry_tokens = entry.get("tokens") or set()
+            if not isinstance(entry_tokens, set):
+                try:
+                    entry_tokens = set(entry_tokens)
+                except TypeError:
+                    continue
+            if not entry_tokens:
+                continue
+            normalized_entry = dict(entry)
+            normalized_entry["tokens"] = entry_tokens
+            catalog_entries.append(normalized_entry)
+
+        answer_has_overlap = False
+        if answer_tokens:
+            for ref in references:
+                if not isinstance(ref, dict):
+                    continue
+                normalized_ref_text = normalize_text(ref.get("text") or "")
+                if not normalized_ref_text:
+                    continue
+                ref_tokens = set(normalized_ref_text.split())
+                if ref_tokens & answer_tokens:
+                    answer_has_overlap = True
+                    break
+            if not answer_has_overlap:
+                for entry in catalog_entries:
+                    entry_tokens = entry.get("tokens") or set()
+                    if entry_tokens & answer_tokens:
+                        answer_has_overlap = True
+                        break
 
         ranked_references: List[Tuple[int, float, Dict[str, object]]] = []
         for ref in references:
@@ -318,24 +360,19 @@ class AIWorker(threading.Thread):
             normalized_ref_text = normalize_text(ref.get("text") or "")
             if normalized_ref_text:
                 ref_tokens = set(normalized_ref_text.split())
-                if combined_tokens:
-                    match_points += len(ref_tokens & combined_tokens)
+                answer_overlap = len(ref_tokens & answer_tokens)
+                combined_overlap = len(ref_tokens & combined_tokens) if combined_tokens else 0
+                if answer_has_overlap and answer_tokens and ref_tokens and answer_overlap == 0:
+                    continue
+                if answer_overlap:
+                    match_points += answer_overlap * 10
+                elif combined_overlap:
+                    match_points += combined_overlap
 
             if match_points <= 0:
                 continue
 
             ranked_references.append((match_points, score_value, ref))
-
-        raw_catalog_entries = _get_catalog_media_index()
-        catalog_entries: List[Dict[str, object]] = []
-        for entry in raw_catalog_entries:
-            if not isinstance(entry, dict):
-                continue
-            entry_step_raw = entry.get("step")
-            entry_step = str(entry_step_raw).strip().lower() if entry_step_raw else ""
-            if entry_step and ai_step_lower and entry_step != ai_step_lower:
-                continue
-            catalog_entries.append(entry)
 
         ranked_catalog: List[Tuple[int, float, Dict[str, object]]] = []
         for entry in catalog_entries:
@@ -344,11 +381,6 @@ class AIWorker(threading.Thread):
                 continue
 
             entry_tokens = entry.get("tokens") or set()
-            if not isinstance(entry_tokens, set):
-                try:
-                    entry_tokens = set(entry_tokens)
-                except TypeError:
-                    continue
             if not entry_tokens:
                 continue
 
@@ -365,6 +397,9 @@ class AIWorker(threading.Thread):
                     full_phrase_matched = True
 
             common_tokens = entry_tokens & combined_tokens if combined_tokens else set()
+            answer_token_hits = entry_tokens & answer_tokens if answer_tokens else set()
+            if answer_has_overlap and answer_tokens and entry_tokens and not answer_token_hits:
+                continue
 
             entry_match_points = 0
             if entity_matches:
@@ -378,7 +413,9 @@ class AIWorker(threading.Thread):
                 if entity_score <= 0:
                     continue
                 entry_match_points = max(entity_score * 10, 5)
-                if common_tokens:
+                if answer_token_hits:
+                    entry_match_points += max(len(answer_token_hits) * 10, 5)
+                elif common_tokens:
                     entry_match_points += len(common_tokens)
             else:
                 if not common_tokens:
@@ -389,6 +426,8 @@ class AIWorker(threading.Thread):
                 if not full_phrase_matched and entry_tokens and common_tokens != entry_tokens:
                     continue
                 entry_match_points = max(len(common_tokens) * 10, 5)
+                if answer_token_hits:
+                    entry_match_points += len(answer_token_hits) * 5
                 if full_phrase_matched:
                     entry_match_points += 5
 
@@ -418,6 +457,14 @@ class AIWorker(threading.Thread):
                     entity_score = score_fields_against_entities(fields, entity_matches)
                     if entity_score <= 0:
                         continue
+                    normalized_ref_text = normalize_text(ref.get("text") or "")
+                    if (
+                        answer_has_overlap
+                        and answer_tokens
+                        and normalized_ref_text
+                        and not set(normalized_ref_text.split()) & answer_tokens
+                    ):
+                        continue
                     entity_fallback.append((entity_score * 10, ref))
 
                 if not entity_fallback:
@@ -427,11 +474,6 @@ class AIWorker(threading.Thread):
                         if not image_url:
                             continue
                         entry_tokens = entry.get("tokens") or set()
-                        if not isinstance(entry_tokens, set):
-                            try:
-                                entry_tokens = set(entry_tokens)
-                            except TypeError:
-                                continue
                         entry_fields = [
                             entry.get("label"),
                             entry.get("raw"),
@@ -440,6 +482,13 @@ class AIWorker(threading.Thread):
                         ]
                         entity_score = score_fields_against_entities(entry_fields, entity_matches)
                         if entity_score <= 0:
+                            continue
+                        if (
+                            answer_has_overlap
+                            and answer_tokens
+                            and entry_tokens
+                            and not (entry_tokens & answer_tokens)
+                        ):
                             continue
                         label = entry.get("label") or entry.get("raw")
                         caption_text = (entry.get("respuesta") or "").strip() or label
@@ -468,6 +517,14 @@ class AIWorker(threading.Thread):
                     media_payload = self._resolve_reference_media(ref)
                     if not media_payload:
                         continue
+                    normalized_ref_text = normalize_text(ref.get("text") or "")
+                    if (
+                        answer_has_overlap
+                        and answer_tokens
+                        and normalized_ref_text
+                        and not set(normalized_ref_text.split()) & answer_tokens
+                    ):
+                        continue
                     dedupe_key = (
                         media_payload.get("link")
                         or media_payload.get("path")
@@ -485,6 +542,14 @@ class AIWorker(threading.Thread):
                     for entry in catalog_entries:
                         image_url = entry.get("media_url")
                         if not image_url:
+                            continue
+                        entry_tokens = entry.get("tokens") or set()
+                        if (
+                            answer_has_overlap
+                            and answer_tokens
+                            and entry_tokens
+                            and not (entry_tokens & answer_tokens)
+                        ):
                             continue
                         label = entry.get("label") or entry.get("raw")
                         caption_text = (entry.get("respuesta") or "").strip() or label
