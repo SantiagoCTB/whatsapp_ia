@@ -1,5 +1,5 @@
 # ---- Base image ----
-FROM python:3.11-slim
+FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1     PYTHONUNBUFFERED=1     PORT=8080
 
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python deps first (better layer caching)
 # If you don't have requirements.txt, you can remove the next two lines.
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt || true
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 
 # Copy the app
 COPY . /app
