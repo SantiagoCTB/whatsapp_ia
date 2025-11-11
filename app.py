@@ -5,6 +5,7 @@ import os
 import logging
 import sys
 from config import Config
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from services.db import init_db
 from routes.auth_routes import auth_bp
@@ -42,6 +43,18 @@ def create_app():
     app.register_blueprint(webhook_bp)
     app.register_blueprint(tablero_bp)
     app.register_blueprint(export_bp)
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def handle_file_too_large(error):
+        max_mb = Config.MAX_UPLOAD_SIZE_MB
+        return (
+            (
+                f"El archivo supera el tamaño máximo permitido de {max_mb} MB. "
+                "Reduce el tamaño del archivo o ajusta la variable de entorno "
+                "MAX_UPLOAD_SIZE_MB."
+            ),
+            413,
+        )
 
     start_ai_worker()
 
