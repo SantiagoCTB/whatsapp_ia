@@ -7,6 +7,7 @@ import subprocess
 import threading
 import hashlib
 import re
+import difflib
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
@@ -1139,9 +1140,142 @@ class CatalogResponder:
 
         return metadata, chunks, pdf_hash
 
+    def _load_pdf_metadata(
+        self, pdf_path: str, source_name: Optional[str]
+    ) -> List[Dict[str, object]]:
+        """Obtiene metadatos del PDF sin reconstruir el índice."""
+
+        try:
+            metadata, _, _ = self._collect_pdf_metadata(pdf_path, source_name)
+        except Exception:
+            logging.warning(
+                "No se pudo recolectar metadatos del PDF complementario", exc_info=True
+            )
+            return []
+        return metadata
+
     def ingest_pdf(self, pdf_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
         """Procesa un PDF y reconstruye el índice FAISS."""
         metadata, chunks, _ = self._collect_pdf_metadata(pdf_path, source_name)
+        return self._commit_ingest(metadata, chunks)
+
+    def ingest_text_with_pdf_images(
+        self,
+        text_path: str,
+        pdf_path: str,
+        source_name: Optional[str] = None,
+    ) -> Dict[str, object]:
+        """Ingiere texto complementándolo con imágenes extraídas de un PDF relacionado."""
+
+        pdf_metadata = self._load_pdf_metadata(pdf_path, source_name)
+
+        sku_lookup: Dict[str, Dict[str, object]] = {}
+        exact_text_lookup: Dict[str, Dict[str, object]] = {}
+        similarity_candidates: List[Tuple[str, Dict[str, object]]] = []
+        for entry in pdf_metadata:
+            skus = entry.get("skus") or []
+            for sku in skus:
+                if not isinstance(sku, str):
+                    continue
+                normalized_sku = sku.strip().upper()
+                if normalized_sku and normalized_sku not in sku_lookup:
+                    sku_lookup[normalized_sku] = entry
+
+            text_value = str(entry.get("text") or "")
+            normalized_text = re.sub(r"\s+", " ", text_value).strip().lower()
+            if normalized_text and normalized_text not in exact_text_lookup:
+                exact_text_lookup[normalized_text] = entry
+            if normalized_text:
+                similarity_candidates.append((normalized_text, entry))
+
+        text_content = ""
+        last_error: Optional[Exception] = None
+        for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+            try:
+                with open(text_path, "r", encoding=encoding) as fh:
+                    text_content = fh.read()
+                break
+            except UnicodeDecodeError as exc:
+                last_error = exc
+                continue
+        else:
+            try:
+                with open(text_path, "r", encoding="utf-8", errors="ignore") as fh:
+                    text_content = fh.read()
+            except Exception as exc:  # pragma: no cover - lectura defensiva
+                raise exc from last_error or exc
+
+        if not text_content or not text_content.strip():
+            raise ValueError("El archivo de texto está vacío o no contiene información útil.")
+
+        metadata: List[Dict[str, object]] = []
+        chunks: List[str] = []
+        source = source_name or os.path.basename(text_path)
+        similarity_threshold = 0.6
+
+        for section_number, chunk in enumerate(self._chunk_text(text_content), start=1):
+            normalized = (chunk or "").strip()
+            if not normalized:
+                continue
+
+            skus = self._extract_skus(normalized)
+            matched_entry: Optional[Dict[str, object]] = None
+            for sku in skus:
+                lookup_key = sku.strip().upper()
+                if not lookup_key:
+                    continue
+                matched_entry = sku_lookup.get(lookup_key)
+                if matched_entry:
+                    break
+
+            normalized_for_match = re.sub(r"\s+", " ", normalized).strip().lower()
+            if not matched_entry and normalized_for_match:
+                matched_entry = exact_text_lookup.get(normalized_for_match)
+
+            if not matched_entry and normalized_for_match and similarity_candidates:
+                best_ratio = 0.0
+                best_entry: Optional[Dict[str, object]] = None
+                for candidate_text, candidate_entry in similarity_candidates:
+                    ratio = difflib.SequenceMatcher(None, normalized_for_match, candidate_text).ratio()
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_entry = candidate_entry
+                if best_entry and best_ratio >= similarity_threshold:
+                    matched_entry = best_entry
+
+            image_path = None
+            image_url = None
+            page_number = section_number
+
+            if matched_entry:
+                image_path = matched_entry.get("image")
+                image_url = matched_entry.get("image_url")
+                page_candidate = matched_entry.get("page")
+                if isinstance(page_candidate, int):
+                    page_number = page_candidate
+                else:
+                    try:
+                        page_number = int(page_candidate)  # type: ignore[arg-type]
+                    except Exception:
+                        page_number = section_number
+
+            metadata.append(
+                {
+                    "page": page_number,
+                    "chunk": 1,
+                    "text": normalized,
+                    "source": source,
+                    "skus": skus,
+                    "backend": "combo_text",
+                    "image": image_path,
+                    "image_url": image_url,
+                }
+            )
+            chunks.append(normalized)
+
+        if not chunks:
+            raise ValueError("El archivo de texto no contiene contenido utilizable.")
+
         return self._commit_ingest(metadata, chunks)
 
     def ingest_text(self, text_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
@@ -1210,6 +1344,41 @@ class CatalogResponder:
 
         if normalized in {"txt", "text", "plain", "text/plain"}:
             return self.ingest_text(file_path, source_name=source_name)
+
+        if normalized == "combo":
+            descriptor_dir = os.path.dirname(file_path) or "."
+            try:
+                with open(file_path, "r", encoding="utf-8") as fh:
+                    descriptor = json.load(fh)
+            except Exception as exc:
+                raise ValueError("No se pudo leer el descriptor de combo.") from exc
+
+            pdf_key_candidates = ("pdf", "pdf_path")
+            text_key_candidates = ("txt", "text", "text_path")
+
+            pdf_value = None
+            for key in pdf_key_candidates:
+                candidate = descriptor.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    pdf_value = candidate.strip()
+                    break
+
+            text_value = None
+            for key in text_key_candidates:
+                candidate = descriptor.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    text_value = candidate.strip()
+                    break
+
+            if not pdf_value or not text_value:
+                raise ValueError("El descriptor de combo debe incluir rutas para 'pdf' y 'text'.")
+
+            if not os.path.isabs(pdf_value):
+                pdf_value = os.path.abspath(os.path.join(descriptor_dir, pdf_value))
+            if not os.path.isabs(text_value):
+                text_value = os.path.abspath(os.path.join(descriptor_dir, text_value))
+
+            return self.ingest_text_with_pdf_images(text_value, pdf_value, source_name=source_name)
 
         raise ValueError(f"Tipo de archivo no soportado para ingesta: {normalized or file_type}")
 
