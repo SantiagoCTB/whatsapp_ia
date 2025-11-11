@@ -1176,7 +1176,6 @@ class CatalogResponder:
         exact_text_lookup: Dict[str, Dict[str, object]] = {}
         similarity_candidates: List[Tuple[str, Dict[str, object]]] = []
         page_fallbacks: List[Dict[str, object]] = []
-        entity_lookup: Dict[str, List[Dict[str, object]]] = {}
         seen_pages: Set[int] = set()
         for entry in pdf_metadata:
             skus = entry.get("skus") or []
@@ -1193,17 +1192,6 @@ class CatalogResponder:
                 exact_text_lookup[normalized_text] = entry
             if normalized_text:
                 similarity_candidates.append((normalized_text, entry))
-
-            entry_entities = entry.get("entities") or []
-            normalized_entity_keys: Set[str] = set()
-            for entity_name in entry_entities:
-                if not isinstance(entity_name, str):
-                    continue
-                normalized_entity = normalize_text(entity_name)
-                if normalized_entity:
-                    normalized_entity_keys.add(normalized_entity)
-            for entity_key in normalized_entity_keys:
-                entity_lookup.setdefault(entity_key, []).append(entry)
 
             page_value = entry.get("page")
             if isinstance(page_value, int) and page_value not in seen_pages:
