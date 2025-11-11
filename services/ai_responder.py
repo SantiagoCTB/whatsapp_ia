@@ -1162,6 +1162,27 @@ class CatalogResponder:
         metadata, chunks, _ = self._collect_pdf_metadata(pdf_path, source_name)
         return self._commit_ingest(metadata, chunks)
 
+    def _build_entity_lookup(
+        self, pdf_metadata: List[Dict[str, object]]
+    ) -> Dict[str, List[Dict[str, object]]]:
+        """Construye un índice por entidades detectadas para correlacionar texto e imágenes."""
+
+        entity_lookup: Dict[str, List[Dict[str, object]]] = defaultdict(list)
+        for entry in pdf_metadata:
+            entry_entities = entry.get("entities") or []
+            normalized_entity_keys: Set[str] = set()
+            for entity_name in entry_entities:
+                if not isinstance(entity_name, str):
+                    continue
+                normalized_entity = normalize_text(entity_name)
+                if normalized_entity:
+                    normalized_entity_keys.add(normalized_entity)
+
+            for entity_key in normalized_entity_keys:
+                entity_lookup[entity_key].append(entry)
+
+        return {key: values[:] for key, values in entity_lookup.items()}
+
     def ingest_text_with_pdf_images(
         self,
         text_path: str,
@@ -1192,6 +1213,12 @@ class CatalogResponder:
                 exact_text_lookup[normalized_text] = entry
             if normalized_text:
                 similarity_candidates.append((normalized_text, entry))
+            page_value = entry.get("page")
+            if isinstance(page_value, int) and page_value not in seen_pages:
+                page_fallbacks.append(entry)
+                seen_pages.add(page_value)
+
+        entity_lookup = self._build_entity_lookup(pdf_metadata)
 
             page_value = entry.get("page")
             if isinstance(page_value, int) and page_value not in seen_pages:
