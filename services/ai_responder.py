@@ -147,6 +147,7 @@ from services.catalog_entities import (
     get_known_entity_names,
     score_fields_against_entities,
 )
+from services.catalog_pdf_indexer import build_catalog_index
 from services.normalize_text import normalize_text
 try:
     from services.db import (
@@ -1193,6 +1194,8 @@ class CatalogResponder:
         """Ingiere texto complementándolo con imágenes extraídas de un PDF relacionado."""
 
         pdf_metadata = self._load_pdf_metadata(pdf_path, source_name)
+        catalog_id = self._compute_pdf_hash(pdf_path)
+        index_summary: Optional[Dict[str, object]] = None
 
         sku_lookup: Dict[str, Dict[str, object]] = {}
         exact_text_lookup: Dict[str, Dict[str, object]] = {}
@@ -1240,6 +1243,28 @@ class CatalogResponder:
 
         if not text_content or not text_content.strip():
             raise ValueError("El archivo de texto está vacío o no contiene información útil.")
+
+        try:
+            index_data = build_catalog_index(text_path, pdf_path, catalog_id)
+        except Exception as exc:
+            logging.exception(
+                "No se pudo construir el índice de productos del catálogo %s", catalog_id
+            )
+            index_summary = {
+                "catalog_id": catalog_id,
+                "error": str(exc),
+            }
+        else:
+            indexed_matches = sum(
+                1
+                for item in index_data.values()
+                if isinstance(item, dict) and item.get("page")
+            )
+            index_summary = {
+                "catalog_id": catalog_id,
+                "products_indexed": indexed_matches,
+                "products_total": len(index_data),
+            }
 
         metadata: List[Dict[str, object]] = []
         chunks: List[str] = []
@@ -1348,6 +1373,7 @@ class CatalogResponder:
                     "backend": "combo_text",
                     "image": image_path,
                     "image_url": image_url,
+                    "catalog_id": catalog_id,
                 }
             )
             chunks.append(normalized)
@@ -1355,7 +1381,10 @@ class CatalogResponder:
         if not chunks:
             raise ValueError("El archivo de texto no contiene contenido utilizable.")
 
-        return self._commit_ingest(metadata, chunks)
+        stats = self._commit_ingest(metadata, chunks)
+        if index_summary:
+            stats["product_image_index"] = index_summary
+        return stats
 
     def ingest_text(self, text_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
         """Procesa un archivo de texto plano y reconstruye el índice FAISS."""
