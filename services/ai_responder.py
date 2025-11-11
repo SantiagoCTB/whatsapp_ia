@@ -8,6 +8,7 @@ import threading
 import hashlib
 import re
 import difflib
+from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 
