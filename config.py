@@ -98,6 +98,9 @@ class Config:
     AI_PAGE_IMAGE_SCALE = float(os.getenv('AI_PAGE_IMAGE_SCALE', 2.0))
     AI_PAGE_IMAGE_QUALITY = int(os.getenv('AI_PAGE_IMAGE_QUALITY', 85))
 
+    MAX_UPLOAD_SIZE_MB = _env_int('MAX_UPLOAD_SIZE_MB', 64, min_value=1)
+    MAX_CONTENT_LENGTH = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
     os.makedirs(MEDIA_ROOT, exist_ok=True)
     os.makedirs(CATALOG_UPLOAD_DIR, exist_ok=True)
     os.makedirs(AI_PAGE_IMAGE_DIR, exist_ok=True)
