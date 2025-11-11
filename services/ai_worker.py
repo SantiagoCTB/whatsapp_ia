@@ -291,7 +291,7 @@ class AIWorker(threading.Thread):
         if not entity_matches and answer_text:
             entity_matches = find_entities_in_text(answer_text)
 
-        ranked: List[Tuple[int, float, Dict[str, object]]] = []
+        ranked_references: List[Tuple[int, float, Dict[str, object]]] = []
         for ref in references:
             if not isinstance(ref, dict):
                 continue
@@ -324,7 +324,7 @@ class AIWorker(threading.Thread):
             if match_points <= 0:
                 continue
 
-            ranked.append((match_points, score_value, ref))
+            ranked_references.append((match_points, score_value, ref))
 
         raw_catalog_entries = _get_catalog_media_index()
         catalog_entries: List[Dict[str, object]] = []
@@ -337,6 +337,7 @@ class AIWorker(threading.Thread):
                 continue
             catalog_entries.append(entry)
 
+        ranked_catalog: List[Tuple[int, float, Dict[str, object]]] = []
         for entry in catalog_entries:
             image_url = entry.get("media_url")
             if not image_url:
@@ -401,9 +402,9 @@ class AIWorker(threading.Thread):
                 "catalog_caption": caption_text,
             }
 
-            ranked.append((entry_match_points, 0.0, pseudo_ref))
+            ranked_catalog.append((entry_match_points, 0.0, pseudo_ref))
 
-        if not ranked:
+        if not ranked_references and not ranked_catalog:
             if entity_matches:
                 entity_fallback: List[Tuple[int, Dict[str, object]]] = []
                 for ref in references:
@@ -455,10 +456,10 @@ class AIWorker(threading.Thread):
                         return
 
                     entry_candidates.sort(key=lambda item: -item[0])
-                    ranked = [(score, 0.0, ref) for score, ref in entry_candidates]
+                    ranked_catalog = [(score, 0.0, ref) for score, ref in entry_candidates]
                 else:
                     entity_fallback.sort(key=lambda item: -item[0])
-                    ranked = [(score, 0.0, ref) for score, ref in entity_fallback]
+                    ranked_references = [(score, 0.0, ref) for score, ref in entity_fallback]
             else:
                 fallback_ranked: List[Tuple[int, float, Dict[str, object]]] = []
                 for order, ref in enumerate(references):
@@ -494,15 +495,24 @@ class AIWorker(threading.Thread):
                             "skus": [],
                             "catalog_caption": caption_text,
                         }
-                        ranked = [(0, 0.0, pseudo_ref)]
+                        ranked_catalog = [(0, 0.0, pseudo_ref)]
                         break
                     else:
                         return
 
                 fallback_ranked.sort(key=lambda item: (item[1], item[0]))
-                ranked = [(0, score, ref) for _, score, ref in fallback_ranked]
-        else:
-            ranked.sort(key=lambda item: (-item[0], item[1]))
+                ranked_references = [(0, score, ref) for _, score, ref in fallback_ranked]
+
+        ranked: List[Tuple[int, float, Dict[str, object]]] = []
+        if ranked_references:
+            ranked_references.sort(key=lambda item: (-item[0], item[1]))
+            ranked.extend(ranked_references)
+        if ranked_catalog:
+            ranked_catalog.sort(key=lambda item: (-item[0], item[1]))
+            ranked.extend(ranked_catalog)
+
+        if not ranked:
+            return
 
         seen: Set[str] = set()
         try:
