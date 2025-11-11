@@ -17,6 +17,7 @@ import uuid
 import re
 import requests
 import json
+import shutil
 from PIL import Image, ImageSequence, UnidentifiedImageError
 
 config_bp = Blueprint('configuracion', __name__)
@@ -389,8 +390,58 @@ def ia_settings():
                     ingest_path = None
                     filename = None
                     ingest_type = 'pdf'
+                    temp_dir = None
                     try:
-                        if len(files) == 1:
+                        pdf_files = [f for f in files if os.path.splitext(f.filename or '')[1].lower() == allowed_pdf]
+                        text_files = [
+                            f
+                            for f in files
+                            if os.path.splitext(f.filename or '')[1].lower() in allowed_text
+                        ]
+                        if pdf_files and text_files:
+                            if len(pdf_files) != 1 or len(text_files) != 1 or len(files) != 2:
+                                if len(pdf_files) != 1 and len(text_files) != 1:
+                                    raise ValueError(
+                                        'Para procesar un combo adjunta exactamente un archivo PDF y uno de texto (.txt).'
+                                    )
+                                if len(pdf_files) != 1:
+                                    raise ValueError('Falta adjuntar un archivo PDF para completar el combo.')
+                                if len(text_files) != 1:
+                                    raise ValueError('Falta adjuntar un archivo de texto (.txt) para completar el combo.')
+                                raise ValueError(
+                                    'Adjunta únicamente un archivo PDF y un archivo de texto (.txt) para procesar el combo.'
+                                )
+
+                            ingest_type = 'combo'
+                            pdf_file = pdf_files[0]
+                            text_file = text_files[0]
+                            pdf_name = secure_filename(pdf_file.filename or 'catalogo.pdf') or 'catalogo.pdf'
+                            if not pdf_name.lower().endswith('.pdf'):
+                                pdf_name = f"{pdf_name}.pdf"
+                            text_name = secure_filename(text_file.filename or 'catalogo.txt') or 'catalogo.txt'
+                            if not text_name.lower().endswith('.txt'):
+                                text_name = f"{text_name}.txt"
+
+                            temp_dir = os.path.join(Config.CATALOG_UPLOAD_DIR, uuid.uuid4().hex)
+                            os.makedirs(temp_dir, exist_ok=True)
+                            pdf_path = os.path.join(temp_dir, pdf_name)
+                            text_path = os.path.join(temp_dir, text_name)
+                            pdf_file.save(pdf_path)
+                            text_file.save(text_path)
+
+                            display_name = pdf_file.filename or text_file.filename or 'catalogo'
+                            descriptor = {
+                                'pdf_path': os.path.relpath(pdf_path, temp_dir),
+                                'text_path': os.path.relpath(text_path, temp_dir),
+                                'source_name': display_name,
+                            }
+                            descriptor_path = os.path.join(temp_dir, 'descriptor.json')
+                            with open(descriptor_path, 'w', encoding='utf-8') as descriptor_file:
+                                json.dump(descriptor, descriptor_file, ensure_ascii=False, indent=2)
+
+                            ingest_path = descriptor_path
+                            filename = display_name
+                        elif len(files) == 1:
                             file = files[0]
                             filename = secure_filename(file.filename)
                             extension = os.path.splitext(filename)[1].lower()
@@ -434,6 +485,15 @@ def ia_settings():
                                 except UnidentifiedImageError:
                                     raise ValueError('Adjunta un archivo de imagen válido (.png, .jpg, .jpeg, .webp).')
                         else:
+                            if pdf_files or text_files:
+                                missing_parts = []
+                                if not pdf_files:
+                                    missing_parts.append('un archivo PDF')
+                                if not text_files:
+                                    missing_parts.append('un archivo de texto (.txt)')
+                                raise ValueError(
+                                    'Para procesar un combo debes adjuntar ' + ' y '.join(missing_parts) + '.'
+                                )
                             # Combina múltiples imágenes en un único PDF temporal
                             invalid = []
                             for f in files:
@@ -477,12 +537,18 @@ def ia_settings():
                     except ValueError as exc:
                         error = str(exc)
                         if ingest_path and os.path.exists(ingest_path):
-                            os.remove(ingest_path)
+                            if temp_dir and os.path.isdir(temp_dir):
+                                shutil.rmtree(temp_dir, ignore_errors=True)
+                            else:
+                                os.remove(ingest_path)
                     except Exception as exc:
                         logging.exception("Error al preparar el catálogo para la ingesta")
                         error = f"No se pudo preparar el catálogo: {exc}"
                         if ingest_path and os.path.exists(ingest_path):
-                            os.remove(ingest_path)
+                            if temp_dir and os.path.isdir(temp_dir):
+                                shutil.rmtree(temp_dir, ignore_errors=True)
+                            else:
+                                os.remove(ingest_path)
                     else:
                         try:
                             start_catalog_ingest(responder, ingest_path, filename, ingest_type)
@@ -497,7 +563,10 @@ def ia_settings():
                             error = f"No se pudo procesar el catálogo: {exc}"
                         finally:
                             if error and ingest_path and os.path.exists(ingest_path):
-                                os.remove(ingest_path)
+                                if temp_dir and os.path.isdir(temp_dir):
+                                    shutil.rmtree(temp_dir, ignore_errors=True)
+                                else:
+                                    os.remove(ingest_path)
                     ingest_status = get_catalog_ingest_status()
         else:
             error = 'Acción no soportada.'
