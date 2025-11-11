@@ -505,7 +505,12 @@ class AIWorker(threading.Thread):
             ranked.sort(key=lambda item: (-item[0], item[1]))
 
         seen: Set[str] = set()
-        max_images = 1
+        try:
+            max_images = int(getattr(Config, "AI_REFERENCE_IMAGE_LIMIT", 1))
+        except Exception:
+            max_images = 1
+        if max_images <= 0:
+            return
         sent = 0
         for _, _, ref in ranked:
             if not isinstance(ref, dict):
