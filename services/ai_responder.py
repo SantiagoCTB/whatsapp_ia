@@ -8,7 +8,7 @@ import threading
 import hashlib
 import re
 import difflib
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 
 try:
@@ -146,6 +146,7 @@ from services.catalog_entities import (
     get_known_entity_names,
     score_fields_against_entities,
 )
+from services.normalize_text import normalize_text
 try:
     from services.db import (
         log_ai_interaction,
@@ -1079,6 +1080,7 @@ class CatalogResponder:
                 for chunk_idx, chunk in enumerate(self._chunk_text(page_text), start=1):
                     if not chunk.strip():
                         continue
+                    chunk_entities = [entity["name"] for entity in find_entities_in_text(chunk)]
                     metadata.append(
                         {
                             "page": page_number,
@@ -1086,6 +1088,7 @@ class CatalogResponder:
                             "text": chunk,
                             "source": source_name or os.path.basename(pdf_path),
                             "skus": self._extract_skus(chunk),
+                            "entities": chunk_entities,
                             "backend": page_backend,
                             "image": image_path,
                             "image_url": self._build_public_image_url(image_path),
@@ -1172,6 +1175,9 @@ class CatalogResponder:
         sku_lookup: Dict[str, Dict[str, object]] = {}
         exact_text_lookup: Dict[str, Dict[str, object]] = {}
         similarity_candidates: List[Tuple[str, Dict[str, object]]] = []
+        page_fallbacks: List[Dict[str, object]] = []
+        entity_lookup: Dict[str, List[Dict[str, object]]] = {}
+        seen_pages: Set[int] = set()
         for entry in pdf_metadata:
             skus = entry.get("skus") or []
             for sku in skus:
@@ -1187,6 +1193,22 @@ class CatalogResponder:
                 exact_text_lookup[normalized_text] = entry
             if normalized_text:
                 similarity_candidates.append((normalized_text, entry))
+
+            entry_entities = entry.get("entities") or []
+            normalized_entity_keys: Set[str] = set()
+            for entity_name in entry_entities:
+                if not isinstance(entity_name, str):
+                    continue
+                normalized_entity = normalize_text(entity_name)
+                if normalized_entity:
+                    normalized_entity_keys.add(normalized_entity)
+            for entity_key in normalized_entity_keys:
+                entity_lookup.setdefault(entity_key, []).append(entry)
+
+            page_value = entry.get("page")
+            if isinstance(page_value, int) and page_value not in seen_pages:
+                page_fallbacks.append(entry)
+                seen_pages.add(page_value)
 
         text_content = ""
         last_error: Optional[Exception] = None
@@ -1219,14 +1241,55 @@ class CatalogResponder:
                 continue
 
             skus = self._extract_skus(normalized)
+            chunk_entities = find_entities_in_text(normalized)
             matched_entry: Optional[Dict[str, object]] = None
-            for sku in skus:
-                lookup_key = sku.strip().upper()
-                if not lookup_key:
-                    continue
-                matched_entry = sku_lookup.get(lookup_key)
-                if matched_entry:
-                    break
+
+            if chunk_entities:
+                candidate_entries: List[Dict[str, object]] = []
+                seen_candidates: Set[int] = set()
+                for entity in chunk_entities:
+                    normalized_name = entity.get("normalized") or normalize_text(entity.get("name"))
+                    if not normalized_name:
+                        continue
+                    for candidate in entity_lookup.get(str(normalized_name), []):
+                        candidate_id = id(candidate)
+                        if candidate_id not in seen_candidates:
+                            candidate_entries.append(candidate)
+                            seen_candidates.add(candidate_id)
+
+                if candidate_entries:
+                    if len(candidate_entries) == 1:
+                        matched_entry = candidate_entries[0]
+                    else:
+                        best_entry: Optional[Dict[str, object]] = None
+                        best_score = -1
+                        best_distance = float("inf")
+                        for candidate in candidate_entries:
+                            fields = [str(candidate.get("text") or ""), str(candidate.get("source") or "")]
+                            score = score_fields_against_entities(fields, chunk_entities)
+                            try:
+                                candidate_page = int(candidate.get("page") or 0)
+                            except Exception:
+                                candidate_page = 0
+                            distance = abs(candidate_page - section_number) if candidate_page else float("inf")
+                            if (
+                                score > best_score
+                                or (score == best_score and distance < best_distance)
+                                or (score == best_score and distance == best_distance and best_entry is None)
+                            ):
+                                best_entry = candidate
+                                best_score = score
+                                best_distance = distance
+                        matched_entry = best_entry or candidate_entries[0]
+
+            if not matched_entry:
+                for sku in skus:
+                    lookup_key = sku.strip().upper()
+                    if not lookup_key:
+                        continue
+                    matched_entry = sku_lookup.get(lookup_key)
+                    if matched_entry:
+                        break
 
             normalized_for_match = re.sub(r"\s+", " ", normalized).strip().lower()
             if not matched_entry and normalized_for_match:
@@ -1242,6 +1305,10 @@ class CatalogResponder:
                         best_entry = candidate_entry
                 if best_entry and best_ratio >= similarity_threshold:
                     matched_entry = best_entry
+
+            if not matched_entry and page_fallbacks:
+                fallback_index = min(max(section_number - 1, 0), len(page_fallbacks) - 1)
+                matched_entry = page_fallbacks[fallback_index]
 
             image_path = None
             image_url = None
@@ -1266,6 +1333,7 @@ class CatalogResponder:
                     "text": normalized,
                     "source": source,
                     "skus": skus,
+                    "entities": [entity["name"] for entity in chunk_entities],
                     "backend": "combo_text",
                     "image": image_path,
                     "image_url": image_url,
