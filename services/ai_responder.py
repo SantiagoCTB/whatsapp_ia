@@ -147,7 +147,7 @@ from services.catalog_entities import (
     get_known_entity_names,
     score_fields_against_entities,
 )
-from services.catalog_pdf_indexer import build_catalog_index
+from services.catalog_pdf_indexer import build_catalog_index, get_image_for_product
 from services.normalize_text import normalize_text
 try:
     from services.db import (
@@ -1279,6 +1279,7 @@ class CatalogResponder:
             skus = self._extract_skus(normalized)
             chunk_entities = find_entities_in_text(normalized)
             matched_entry: Optional[Dict[str, object]] = None
+            used_page_fallback = False
 
             if chunk_entities:
                 candidate_entries: List[Dict[str, object]] = []
@@ -1345,6 +1346,7 @@ class CatalogResponder:
             if not matched_entry and page_fallbacks:
                 fallback_index = min(max(section_number - 1, 0), len(page_fallbacks) - 1)
                 matched_entry = page_fallbacks[fallback_index]
+                used_page_fallback = True
 
             image_path = None
             image_url = None
@@ -1361,6 +1363,26 @@ class CatalogResponder:
                         page_number = int(page_candidate)  # type: ignore[arg-type]
                     except Exception:
                         page_number = section_number
+
+            product_name = self._extract_product_name_from_chunk(normalized)
+            if product_name and (used_page_fallback or not image_path):
+                lookup_result: Optional[Dict[str, object]] = None
+                try:
+                    lookup_result = get_image_for_product(product_name, catalog_id, min_score=0.7)
+                except Exception:
+                    logging.exception(
+                        "No se pudo resolver la imagen del producto %s mediante el índice del catálogo",
+                        product_name,
+                    )
+                if lookup_result and lookup_result.get("ok"):
+                    lookup_page = lookup_result.get("page")
+                    if isinstance(lookup_page, int):
+                        page_number = lookup_page
+                    image_abs_path = lookup_result.get("image_path")
+                    rel_path = self._relativize_media_path(str(image_abs_path)) if image_abs_path else None
+                    if rel_path:
+                        image_path = rel_path
+                        image_url = self._build_public_image_url(rel_path)
 
             metadata.append(
                 {
@@ -1385,6 +1407,66 @@ class CatalogResponder:
         if index_summary:
             stats["product_image_index"] = index_summary
         return stats
+
+    @staticmethod
+    def _extract_product_name_from_chunk(chunk: str) -> Optional[str]:
+        if not chunk:
+            return None
+
+        lowered = chunk.lower()
+        if "producto" not in lowered:
+            return None
+
+        keys = [
+            "tipo",
+            "hoja",
+            "tarifa",
+            "cama",
+            "amenidades",
+            "zona",
+            "incluye",
+            "observaciones",
+            "capacidad",
+            "política",
+            "politica",
+        ]
+        pattern = r"(?i)producto\s*:\s*(.+?)(?=\s+(?:" + "|".join(keys) + r")\s*:|$)"
+        match = re.search(pattern, chunk)
+        if match:
+            candidate = match.group(1).strip().strip("-–—:")
+            if candidate:
+                return candidate
+
+        # Fallback: return the first phrase containing cabaña/habitación keywords
+        tokens = re.split(r"[\r\n]+", chunk)
+        for token in tokens:
+            stripped = token.strip()
+            lowered_line = stripped.lower()
+            if any(word in lowered_line for word in ("cabaña", "cabana", "habitación", "habitacion")):
+                parts = re.split(r"\s{2,}|\s+-\s+", stripped)
+                if parts:
+                    return parts[0].strip().strip("-–—:")
+        return None
+
+    @staticmethod
+    def _relativize_media_path(abs_path: str) -> Optional[str]:
+        if not abs_path:
+            return None
+
+        try:
+            media_root = os.path.abspath(str(Config.MEDIA_ROOT))
+            candidate = os.path.abspath(str(abs_path))
+            common = os.path.commonpath([media_root, candidate])
+        except Exception:
+            return None
+
+        if os.path.normpath(common) != os.path.normpath(media_root):
+            return None
+
+        try:
+            return os.path.relpath(candidate, media_root)
+        except Exception:
+            return None
 
     def ingest_text(self, text_path: str, source_name: Optional[str] = None) -> Dict[str, object]:
         """Procesa un archivo de texto plano y reconstruye el índice FAISS."""

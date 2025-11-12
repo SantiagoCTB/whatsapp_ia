@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+from typing import Dict
 
 import pytest
 
@@ -23,6 +24,13 @@ db_stub.get_recent_messages_for_context = lambda *args, **kwargs: []
 db_stub.log_ai_interaction = lambda *args, **kwargs: None
 db_stub.update_ai_last_processed = lambda *args, **kwargs: None
 db_stub.update_chat_state = lambda *args, **kwargs: None
+db_stub.get_connection = lambda *args, **kwargs: None
+db_stub.guardar_mensaje = lambda *args, **kwargs: None
+db_stub.get_chat_state = lambda *args, **kwargs: None
+db_stub.delete_chat_state = lambda *args, **kwargs: None
+db_stub.is_ai_enabled = lambda *args, **kwargs: True
+db_stub.get_step_triggers = lambda *args, **kwargs: []
+db_stub.update_mensaje_texto = lambda *args, **kwargs: None
 sys.modules.setdefault("services.db", db_stub)
 
 requests_stub = types.ModuleType("requests")
@@ -32,6 +40,10 @@ sys.modules.setdefault("requests", requests_stub)
 
 whatsapp_stub = types.ModuleType("services.whatsapp_api")
 whatsapp_stub.enviar_mensaje = lambda *args, **kwargs: True
+whatsapp_stub.download_audio = lambda *args, **kwargs: None
+whatsapp_stub.get_media_url = lambda *args, **kwargs: "https://example.com/media"
+whatsapp_stub.guardar_mensaje = lambda *args, **kwargs: None
+whatsapp_stub.requests = requests_stub
 sys.modules.setdefault("services.whatsapp_api", whatsapp_stub)
 
 from services.ai_responder import CatalogResponder
@@ -183,3 +195,125 @@ def test_ingest_text_generates_metadata(tmp_path, monkeypatch):
     assert responder._metadata
     assert responder._metadata[0]["backend"] == "text"
     assert responder._metadata[0]["source"] == "Catalogo TXT"
+
+
+def test_ingest_text_with_pdf_images_uses_product_lookup_for_missing_entities(tmp_path, monkeypatch):
+    from services import ai_responder
+
+    media_root = tmp_path / "media"
+    catalog_root = media_root / "catalogos"
+    pages_dir = media_root / "pages"
+    base_index = tmp_path / "index" / "catalog"
+    for path in (media_root, catalog_root, pages_dir, base_index.parent):
+        path.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(ai_responder.Config, "MEDIA_ROOT", str(media_root))
+    monkeypatch.setattr(ai_responder.Config, "CATALOG_UPLOAD_DIR", str(catalog_root))
+    monkeypatch.setattr(ai_responder.Config, "AI_PAGE_IMAGE_DIR", str(pages_dir))
+    monkeypatch.setattr(ai_responder.Config, "AI_VECTOR_STORE_PATH", str(base_index))
+
+    monkeypatch.setattr(ai_responder, "update_ai_catalog_metadata", lambda stats: None)
+    monkeypatch.setattr(ai_responder, "set_ai_last_processed_to_latest", lambda: None)
+    monkeypatch.setattr(ai_responder, "build_catalog_index", lambda *args, **kwargs: {})
+
+    CatalogResponder = ai_responder.CatalogResponder
+    CatalogResponder._instance = None
+    responder = CatalogResponder()
+
+    catalog_id = "fakehash"
+    images_dir = catalog_root / catalog_id / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_metadata = []
+    entity_map = {
+        1: "Habitación Pino",
+        2: "Habitación Eucalipto",
+        4: "Cabaña Cóndor",
+        5: "Cabaña Mamaquilla",
+        7: "Cabaña Tunúpa",
+    }
+    for page in range(1, 9):
+        rel_path = os.path.join("catalogos", catalog_id, "images", f"page_{page:04d}.png")
+        pdf_metadata.append(
+            {
+                "page": page,
+                "chunk": 1,
+                "text": f"Página {page}",
+                "image": rel_path,
+                "image_url": None,
+                "entities": [entity_map[page]] if page in entity_map else [],
+            }
+        )
+
+    responder._load_pdf_metadata = lambda _pdf_path, _source: pdf_metadata
+    responder._compute_pdf_hash = lambda _pdf_path: catalog_id
+
+    captured: Dict[str, object] = {}
+
+    def fake_commit(metadata, chunks):
+        captured["metadata"] = metadata
+        captured["chunks"] = chunks
+        return {"chunks": len(metadata)}
+
+    responder._commit_ingest = fake_commit
+
+    def fake_get_image_for_product(name, catalog_id_arg, min_score=0.85):
+        lookup = {
+            "cabaña inti": 3,
+            "cabana inti": 3,
+            "cabaña taypi": 6,
+            "cabana taypi": 6,
+        }
+        normalized = name.strip().lower()
+        page = lookup.get(normalized)
+        if not page:
+            return {"ok": False, "reason": "NO_MATCH"}
+        image_path = images_dir / f"page_{page:04d}.png"
+        image_path.touch()
+        return {
+            "ok": True,
+            "image_path": str(image_path),
+            "page": page,
+        }
+
+    monkeypatch.setattr(ai_responder, "get_image_for_product", fake_get_image_for_product)
+
+    pdf_path = tmp_path / "catalogo.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    text_lines = []
+    for idx in range(12):
+        text_lines.append(f"SECCIÓN GENERAL {idx}")
+        text_lines.append("")
+    text_lines.extend(
+        [
+            "SECCIÓN: FICHAS DE PRODUCTO",
+            "",
+            "PRODUCTO: Cabaña Inti",
+            "Tipo: Cabaña de lujo",
+            "Hoja: 3",
+            "Observaciones: vista a la montaña",
+            "",
+            "PRODUCTO: Cabaña Taypi",
+            "Tipo: Cabaña familiar",
+            "Hoja: 6",
+            "Observaciones: ideal para grupos",
+        ]
+    )
+    text_path = tmp_path / "catalogo.txt"
+    text_path.write_text("\n".join(text_lines), encoding="utf-8")
+
+    monkeypatch.setattr(ai_responder, "get_known_entity_names", lambda: [])
+
+    responder.ingest_text_with_pdf_images(str(text_path), str(pdf_path), source_name="Catalogo combinado")
+
+    assert "metadata" in captured
+
+    inti_entry = next(m for m in captured["metadata"] if "Cabaña Inti" in m["text"])
+    taypi_entry = next(m for m in captured["metadata"] if "Cabaña Taypi" in m["text"])
+
+    assert inti_entry["page"] == 3
+    assert inti_entry["image"].endswith("page_0003.png")
+
+    assert taypi_entry["page"] == 6
+    assert taypi_entry["image"].endswith("page_0006.png")
