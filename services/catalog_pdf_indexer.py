@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -24,6 +25,7 @@ class CatalogProduct:
 
     name: str
     aliases: Sequence[str]
+    page_hint: Optional[int] = None
 
 
 @dataclass
@@ -105,6 +107,22 @@ def extract_catalog_products(text_path: str) -> List[CatalogProduct]:
 
     products: List[CatalogProduct] = []
     in_products_section = False
+    current_name: Optional[str] = None
+    current_page: Optional[int] = None
+
+    def flush_current_product() -> None:
+        nonlocal current_name, current_page
+        if current_name:
+            products.append(
+                CatalogProduct(
+                    name=current_name,
+                    aliases=_build_aliases(current_name),
+                    page_hint=current_page,
+                )
+            )
+        current_name = None
+        current_page = None
+
     for raw_line in _iter_lines(text_content):
         normalized_line = raw_line.strip()
         upper_line = normalized_line.upper()
@@ -113,14 +131,26 @@ def extract_catalog_products(text_path: str) -> List[CatalogProduct]:
                 in_products_section = True
             continue
 
-        if not normalized_line:
-            continue
-
         if upper_line.startswith("PRODUCTO:"):
+            flush_current_product()
             name = normalized_line.split(":", 1)[1].strip()
             if not name:
                 continue
-            products.append(CatalogProduct(name=name, aliases=_build_aliases(name)))
+            current_name = name
+            current_page = None
+            continue
+
+        if not normalized_line:
+            continue
+
+        if current_name and ":" in normalized_line:
+            key, _, value = normalized_line.partition(":")
+            if key.strip().upper() == "HOJA":
+                match = re.search(r"\d+", value)
+                if match:
+                    current_page = int(match.group())
+
+    flush_current_product()
     if not products:
         raise ValueError("No se encontraron productos en la sección FICHAS DE PRODUCTO.")
     return products
@@ -281,19 +311,24 @@ def build_catalog_index(
     for product in products:
         match = _find_best_page_for_product(page_index, product)
         if match.page is not None and match.score >= min_score:
-            page_number = match.page
+            page_number: Optional[int] = match.page
+        else:
+            page_number = product.page_hint
+
+        if page_number is not None:
             if page_number not in rendered_pages:
                 image_name = f"page_{page_number:04d}.png"
                 image_path = os.path.join(images_dir, image_name)
                 try:
                     _render_page_image(pdf_path, page_number, image_path)
                 except Exception:
-                    logging.exception("No se pudo renderizar la página %s del PDF", page_number)
+                    logging.exception(
+                        "No se pudo renderizar la página %s del PDF", page_number
+                    )
                     image_path = ""
                 rendered_pages[page_number] = image_path
             image_path = rendered_pages.get(page_number, "")
         else:
-            page_number = None
             image_path = ""
 
         catalog_index[product.name] = {
